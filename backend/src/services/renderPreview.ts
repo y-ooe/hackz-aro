@@ -1,8 +1,14 @@
 import { decodeUnicodeEscapes } from "./agent.js";
 
-/** 純粋なReactコンポーネント(.jsx)を、Babelで動く単一HTMLに包む。
- *  vendorScriptBase で React/Babel の配信元(オリジン)を指定する。 */
-export function renderPreviewHtml(jsx: string, vendorScriptBase = ""): string {
+// デプロイ用HTMLが読み込む React / Babel(公開CDN)。
+// プレビューと違い localhost には依存できないため、誰の環境でも動くCDNを使う。
+const REACT_CDN = "https://unpkg.com/react@18/umd/react.production.min.js";
+const REACT_DOM_CDN =
+  "https://unpkg.com/react-dom@18/umd/react-dom.production.min.js";
+const BABEL_CDN = "https://unpkg.com/@babel/standalone@7/babel.min.js";
+
+/** 純粋なReactコンポーネント(.jsx)を、どの環境でも動く単一HTMLに包む(デプロイ用)。 */
+export function renderPreviewHtml(jsx: string): string {
   // 古い生成物も含めて正規化:
   //  - 日本語/絵文字の \uXXXX エスケープを実際の文字へ戻す
   //  - CDNでReactをグローバル提供しているため import/export 行を除去
@@ -17,9 +23,9 @@ export function renderPreviewHtml(jsx: string, vendorScriptBase = ""): string {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<script src="${vendorScriptBase}/vendor/react.development.js"></script>
-<script src="${vendorScriptBase}/vendor/react-dom.development.js"></script>
-<script src="${vendorScriptBase}/vendor/babel.min.js"></script>
+<script src="${REACT_CDN}"></script>
+<script src="${REACT_DOM_CDN}"></script>
+<script src="${BABEL_CDN}"></script>
 <style>body{margin:0;font-family:system-ui,-apple-system,sans-serif}</style>
 </head>
 <body>
