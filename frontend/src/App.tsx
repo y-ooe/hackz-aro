@@ -1,167 +1,221 @@
-import { useCallback, useState } from 'react'
-import { InputPanel } from './components/InputPanel'
-import { LogConsole } from './components/LogConsole'
-import { ResultPanel } from './components/ResultPanel'
-import { runMockStream } from './mockStream'
-import type { DeployRequest, LogEntry, LogLevel, TargetCloud } from './types'
+import { useCallback, useEffect, useState } from 'react'
+import { ChatPanel } from './components/ChatPanel'
+import { PreviewPanel } from './components/PreviewPanel'
+import type { ChatMessage, SessionState, SessionStatus, TargetCloud } from './types'
 
-// === モック / 本番 の切り替えフラグ ===
-// true  : バックエンド未接続でも動くモックストリームを使用(デモ用)
-// false : 本番。実際に POST /api/deploy へリクエストする
-// 環境変数 VITE_USE_MOCK=false を .env に設定すると本番モードになる。
-const USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false'
+const STORAGE_KEY = 'infra-agent-session-id'
 
 function App() {
-  // === State 管理 ===
-  const [prompt, setPrompt] = useState('')
-  const [projectName, setProjectName] = useState('')
+  const [sessionId, setSessionId] = useState<number | null>(null)
+  const [projectName, setProjectName] = useState('my-app')
   const [targetCloud, setTargetCloud] = useState<TargetCloud>('vercel')
-  const [isGenerating, setIsGenerating] = useState(false)
-  const [logs, setLogs] = useState<LogEntry[]>([])
-  const [resultUrl, setResultUrl] = useState<string | null>(null)
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [previewKey, setPreviewKey] = useState(0)
+  const [hasPreview, setHasPreview] = useState(false)
+  const [status, setStatus] = useState<SessionStatus>('draft')
+  const [deployUrl, setDeployUrl] = useState<string | null>(null)
+  const [isSending, setIsSending] = useState(false)
+  const [isDeploying, setIsDeploying] = useState(false)
 
-  /** ログを1行追加するヘルパー */
-  const appendLog = useCallback((level: LogLevel, message: string) => {
-    setLogs((prev) => [...prev, { level, message, timestamp: Date.now() }])
+  // リロード時: localStorage に保存した sessionId から状態を復帰
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY)
+    if (!saved) return
+    const id = Number(saved)
+    if (!Number.isInteger(id)) return
+
+    fetch(`/api/sessions/${id}`)
+      .then((res) => (res.ok ? res.json() : Promise.reject()))
+      .then((state: SessionState) => {
+        setSessionId(state.sessionId)
+        setProjectName(state.projectName)
+        setTargetCloud(state.targetCloud)
+        setMessages(state.messages)
+        setHasPreview(state.hasPreview)
+        setStatus(state.status)
+        setDeployUrl(state.deployUrl)
+        if (state.hasPreview) setPreviewKey((k) => k + 1)
+      })
+      .catch(() => localStorage.removeItem(STORAGE_KEY))
   }, [])
 
-  /**
-   * 「Generate & Deploy」実行ハンドラ。
-   * POST /api/deploy にリクエストを送り、バックエンドからストリーミングで
-   * 送られてくる実行ログを順次 logs State に追加していく。
-   */
-  const handleGenerate = useCallback(async () => {
-    if (isGenerating) return
+  /** 必要ならセッションを作成し、その id を返す */
+  const ensureSession = useCallback(async (): Promise<number> => {
+    if (sessionId) return sessionId
+    const res = await fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectName, targetCloud }),
+    })
+    if (!res.ok) throw new Error('セッションの作成に失敗しました')
+    const { sessionId: id } = (await res.json()) as { sessionId: number }
+    setSessionId(id)
+    localStorage.setItem(STORAGE_KEY, String(id))
+    return id
+  }, [sessionId, projectName, targetCloud])
 
-    // 実行開始: 状態をリセット
-    setIsGenerating(true)
-    setLogs([])
-    setResultUrl(null)
-    appendLog('info', `Starting build for "${projectName}" → ${targetCloud}`)
+  /** チャット送信 */
+  const handleSend = useCallback(
+    async (text: string) => {
+      if (isSending) return
+      setIsSending(true)
+      setMessages((prev) => [...prev, { role: 'user', content: text }])
 
-    const body: DeployRequest = { projectName, targetCloud, prompt }
+      try {
+        const id = await ensureSession()
 
-    try {
-      if (USE_MOCK) {
-        // -----------------------------------------------------------------
-        // モック: バックエンド未接続でもUIを確認できるデモ用ストリーム。
-        // 本番と同じ handleStreamChunk でパースされる。
-        // -----------------------------------------------------------------
-        await runMockStream(body, handleStreamChunk)
-      } else {
-        // -----------------------------------------------------------------
-        // 本番: バックエンド(Express)へのストリーミングリクエスト
-        // -----------------------------------------------------------------
-        const response = await fetch('/api/deploy', {
+        const res = await fetch(`/api/sessions/${id}/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
+          body: JSON.stringify({ message: text }),
         })
+        if (!res.ok || !res.body) throw new Error(`Request failed: ${res.status}`)
 
-        if (!response.ok || !response.body) {
-          throw new Error(`Request failed: ${response.status}`)
-        }
-
-        // fetch の ReadableStream を逐次読み取り、行(NDJSON)ごとに処理する。
-        // バックエンドは 1行 = 1つのJSONログ ({ level, message } / 完了時は { url })
-        // を改行区切りで流す想定。SSE の場合は "data: " プレフィックスを剥がす。
-        const reader = response.body.getReader()
+        // NDJSON を逐次読み取り
+        const reader = res.body.getReader()
         const decoder = new TextDecoder()
         let buffer = ''
+
+        const handleLine = (line: string) => {
+          const trimmed = line.trim()
+          if (!trimmed) return
+          try {
+            const event = JSON.parse(trimmed) as {
+              type: string
+              text?: string
+            }
+            if (event.type === 'reply' && event.text) {
+              setMessages((prev) => [
+                ...prev,
+                { role: 'assistant', content: event.text! },
+              ])
+            } else if (event.type === 'preview_updated') {
+              setHasPreview(true)
+              setStatus('draft') // 修正したので未デプロイ扱いに戻す
+              setDeployUrl(null)
+              setPreviewKey((k) => k + 1)
+            } else if (event.type === 'error' && event.text) {
+              setMessages((prev) => [
+                ...prev,
+                { role: 'assistant', content: `⚠️ ${event.text}` },
+              ])
+            }
+          } catch {
+            // パースできない行は無視
+          }
+        }
 
         while (true) {
           const { done, value } = await reader.read()
           if (done) break
-
           buffer += decoder.decode(value, { stream: true })
           const lines = buffer.split('\n')
-          // 最後の要素は未完の行かもしれないのでバッファに残す
           buffer = lines.pop() ?? ''
-
-          for (const line of lines) {
-            const trimmed = line.trim()
-            if (!trimmed) continue
-            handleStreamChunk(trimmed)
-          }
+          for (const line of lines) handleLine(line)
         }
-        // 残ったバッファを処理
-        if (buffer.trim()) handleStreamChunk(buffer.trim())
+        if (buffer.trim()) handleLine(buffer)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: `⚠️ エラー: ${msg}` },
+        ])
+      } finally {
+        setIsSending(false)
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      appendLog('error', `Deployment failed: ${message}`)
-    } finally {
-      setIsGenerating(false)
-    }
-  }, [appendLog, isGenerating, projectName, prompt, targetCloud])
+    },
+    [ensureSession, isSending]
+  )
 
-  /**
-   * ストリームから受信した1行(JSON文字列)をパースして State に反映する。
-   * - { level, message } → ログに追加
-   * - { url } → 完了URLとして resultUrl に格納
-   */
-  function handleStreamChunk(raw: string) {
-    // SSE 形式("data: {...}")にも一応対応
-    const json = raw.startsWith('data:') ? raw.slice(5).trim() : raw
+  /** デプロイ */
+  const handleDeploy = useCallback(async () => {
+    if (!sessionId || isDeploying) return
+    setIsDeploying(true)
     try {
-      const event = JSON.parse(json) as {
-        level?: LogLevel
-        message?: string
-        url?: string
-      }
-      if (event.url) {
-        setResultUrl(event.url)
-        appendLog('success', `Deployed: ${event.url}`)
-      } else if (event.message) {
-        appendLog(event.level ?? 'info', event.message)
-      }
-    } catch {
-      // JSONでなければそのまま info ログとして表示
-      appendLog('info', raw)
+      const res = await fetch(`/api/sessions/${sessionId}/deploy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
+      const data = (await res.json()) as { url?: string; error?: string }
+      if (!res.ok) throw new Error(data.error ?? 'デプロイに失敗しました')
+      setStatus('deployed')
+      setDeployUrl(data.url ?? null)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: `⚠️ デプロイ失敗: ${msg}` },
+      ])
+    } finally {
+      setIsDeploying(false)
     }
-  }
+  }, [sessionId, isDeploying])
+
+  /** 現在のセッションを削除して、新規状態にリセットする */
+  const handleNewSession = useCallback(async () => {
+    if (sessionId) {
+      try {
+        await fetch(`/api/sessions/${sessionId}`, { method: 'DELETE' })
+      } catch {
+        // 削除に失敗してもローカルはリセットする
+      }
+    }
+    localStorage.removeItem(STORAGE_KEY)
+    setSessionId(null)
+    setMessages([])
+    setHasPreview(false)
+    setStatus('draft')
+    setDeployUrl(null)
+    setPreviewKey((k) => k + 1)
+  }, [sessionId])
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-200">
+    <div className="flex h-screen flex-col bg-neutral-950 text-neutral-200">
       {/* ヘッダー */}
       <header className="flex items-center gap-3 border-b border-neutral-800 px-6 py-4">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-600 text-lg">
           ⚡
         </div>
         <div>
-          <h1 className="text-base font-semibold text-neutral-100">
-            Infra Agent
-          </h1>
+          <h1 className="text-base font-semibold text-neutral-100">Infra Agent</h1>
           <p className="text-xs text-neutral-500">
-            AI-powered infrastructure builder
+            AIと対話してアプリを作成・プレビュー・デプロイ
           </p>
         </div>
-        <span className="ml-auto rounded-full border border-neutral-800 px-3 py-1 text-xs text-neutral-400">
+        <button
+          type="button"
+          onClick={handleNewSession}
+          disabled={isSending}
+          className="ml-auto flex items-center gap-1.5 rounded-lg border border-neutral-700 px-3 py-1.5 text-xs font-medium text-neutral-300 transition hover:border-red-500/60 hover:bg-red-950/30 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          🗑 セッションを消す
+        </button>
+        <span className="rounded-full border border-neutral-800 px-3 py-1 text-xs text-neutral-400">
           MCP enabled
         </span>
       </header>
 
-      {/* メイン: 左=入力 / 右=コンソール */}
-      <main className="grid grid-cols-1 gap-5 p-6 lg:h-[calc(100vh-69px)] lg:grid-cols-[minmax(360px,420px)_1fr]">
-        {/* 左カラム */}
-        <div className="flex min-h-0 flex-col gap-5 lg:overflow-y-auto">
-          <InputPanel
-            projectName={projectName}
-            onProjectNameChange={setProjectName}
-            targetCloud={targetCloud}
-            onTargetCloudChange={setTargetCloud}
-            prompt={prompt}
-            onPromptChange={setPrompt}
-            isGenerating={isGenerating}
-            onGenerate={handleGenerate}
-          />
-          <ResultPanel resultUrl={resultUrl} />
-        </div>
-
-        {/* 右カラム: ログコンソール */}
-        <div className="min-h-[420px] lg:min-h-0">
-          <LogConsole logs={logs} isGenerating={isGenerating} />
-        </div>
+      {/* メイン: 左=プレビュー / 右=チャット */}
+      <main className="grid min-h-0 flex-1 grid-cols-1 gap-5 p-6 lg:grid-cols-[1fr_minmax(360px,440px)]">
+        <PreviewPanel
+          sessionId={sessionId}
+          previewKey={previewKey}
+          hasPreview={hasPreview}
+          projectName={projectName}
+          onProjectNameChange={setProjectName}
+          targetCloud={targetCloud}
+          onTargetCloudChange={setTargetCloud}
+          configLocked={false}
+          status={status}
+          deployUrl={deployUrl}
+          isDeploying={isDeploying}
+          onDeploy={handleDeploy}
+        />
+        <ChatPanel
+          messages={messages}
+          isSending={isSending}
+          onSend={handleSend}
+        />
       </main>
     </div>
   )
