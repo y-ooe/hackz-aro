@@ -34,7 +34,7 @@ function App() {
         setHasPreview(state.hasPreview)
         setStatus(state.status)
         setDeployUrl(state.deployUrl)
-        if (state.hasPreview) setPreviewKey((k) => k + 1)
+        if (state.hasPreview) setPreviewKey(Date.now())
       })
       .catch(() => localStorage.removeItem(STORAGE_KEY))
   }, [])
@@ -93,11 +93,11 @@ function App() {
               setHasPreview(true)
               setStatus('draft') // 修正したので未デプロイ扱いに戻す
               setDeployUrl(null)
-              setPreviewKey((k) => k + 1)
+              setPreviewKey(Date.now())
             } else if (event.type === 'error' && event.text) {
               setMessages((prev) => [
                 ...prev,
-                { role: 'assistant', content: `⚠️ ${event.text}` },
+                { role: 'assistant', content: `エラー: ${event.text}` },
               ])
             }
           } catch {
@@ -118,7 +118,7 @@ function App() {
         const msg = err instanceof Error ? err.message : String(err)
         setMessages((prev) => [
           ...prev,
-          { role: 'assistant', content: `⚠️ エラー: ${msg}` },
+          { role: 'assistant', content: `エラー: ${msg}` },
         ])
       } finally {
         setIsSending(false)
@@ -144,7 +144,7 @@ function App() {
       const msg = err instanceof Error ? err.message : String(err)
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: `⚠️ デプロイ失敗: ${msg}` },
+        { role: 'assistant', content: `デプロイ失敗: ${msg}` },
       ])
     } finally {
       setIsDeploying(false)
@@ -166,33 +166,25 @@ function App() {
     setHasPreview(false)
     setStatus('draft')
     setDeployUrl(null)
-    setPreviewKey((k) => k + 1)
+    setPreviewKey(Date.now())
   }, [sessionId])
 
   return (
     <div className="flex h-screen flex-col bg-neutral-950 text-neutral-200">
       {/* ヘッダー */}
       <header className="flex items-center gap-3 border-b border-neutral-800 px-6 py-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-600 text-lg">
-          ⚡
-        </div>
         <div>
           <h1 className="text-base font-semibold text-neutral-100">Infra Agent</h1>
-          <p className="text-xs text-neutral-500">
-            AIと対話してアプリを作成・プレビュー・デプロイ
-          </p>
+          <p className="text-xs text-neutral-500">要望を伝えてアプリを作成・プレビュー・デプロイ</p>
         </div>
         <button
           type="button"
           onClick={handleNewSession}
           disabled={isSending}
-          className="ml-auto flex items-center gap-1.5 rounded-lg border border-neutral-700 px-3 py-1.5 text-xs font-medium text-neutral-300 transition hover:border-red-500/60 hover:bg-red-950/30 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
+          className="ml-auto rounded-lg border border-neutral-700 px-3 py-1.5 text-xs font-medium text-neutral-300 transition hover:border-red-500/60 hover:bg-red-950/30 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          🗑 セッションを消す
+          セッションを削除
         </button>
-        <span className="rounded-full border border-neutral-800 px-3 py-1 text-xs text-neutral-400">
-          MCP enabled
-        </span>
       </header>
 
       {/* メイン: 左=プレビュー / 右=チャット */}

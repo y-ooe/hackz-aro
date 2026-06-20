@@ -39,6 +39,7 @@ const SYSTEM_PROMPT = [
   "- スタイルはコンポーネント内のインライン style か、コンポーネント先頭で定義した style 文字列で当ててください。外部CSSファイルやUIライブラリは使わないでください。",
   "- 必要なら App の下に補助コンポーネントや定数を定義してかまいません。最終的に画面に描画されるのは `App` です。",
   "- 見た目も整った、そのまま動く完成品にしてください。",
+  "- 日本語や絵文字は、Unicodeエスケープ(バックスラッシュuXXXX 形式)を絶対に使わず、そのまま直接書いてください。特にJSXのタグの中身にエスケープを書くと構文エラーになり画面が表示されません。例: <div>数学クイズ 🧮</div> と書く（エスケープ表記は禁止）。",
   "",
   "【出力例のイメージ】",
   "function App() {",
@@ -60,6 +61,20 @@ const SYSTEM_PROMPT = [
  * @param currentJsx 現在の生成コード(.jsx, 無ければ null)
  * @param userMessage 今回のユーザー発言
  */
+/**
+ * モデルが日本語・絵文字を \uXXXX / \u{XXXXX} でエスケープして返すことがある。
+ * JSXのタグ内ではこれが構文エラーや文字化けになるため、実際の文字へ戻す。
+ */
+export function decodeUnicodeEscapes(s: string): string {
+  return s
+    .replace(/\\u\{([0-9a-fA-F]+)\}/g, (_, h) =>
+      String.fromCodePoint(parseInt(h, 16))
+    )
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) =>
+      String.fromCharCode(parseInt(h, 16))
+    );
+}
+
 export async function generateOrEditApp(
   history: MessageRow[],
   currentJsx: string | null,
@@ -87,6 +102,10 @@ export async function generateOrEditApp(
   const result = response.parsed_output;
   if (!result) {
     throw new Error("AIの応答を解釈できませんでした");
+  }
+  // モデルが日本語・絵文字を \uXXXX 等でエスケープして返すことがあるためデコード
+  if (result.jsx) {
+    result.jsx = decodeUnicodeEscapes(result.jsx);
   }
   return result;
 }

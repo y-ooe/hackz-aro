@@ -1,7 +1,8 @@
 import express from "express";
 import dotenv from "dotenv";
+import path from "node:path";
 import { chatWithTools } from "./claude.js";
-import { generateOrEditApp } from "./agent.js";
+import { generateOrEditApp, decodeUnicodeEscapes } from "./agent.js";
 import { deployApp } from "./deploy.js";
 import {
   initDb,
@@ -13,24 +14,52 @@ import {
   deleteSession,
 } from "./db.js";
 
+const VENDOR_DIR = path.resolve(import.meta.dirname, "../public/vendor");
+
 /** 純粋なReactコンポーネント(.jsx)を、Babelで動く単一HTMLに包む */
 function renderPreviewHtml(jsx: string): string {
+  // 古い生成物も含めて正規化:
+  //  - 日本語/絵文字の \uXXXX エスケープを実際の文字へ戻す
+  //  - CDNでReactをグローバル提供しているため import/export 行を除去
+  const code = decodeUnicodeEscapes(jsx)
+    .replace(/^\s*import\s.*$/gm, "")
+    .replace(/^\s*export\s+default\s+.*$/gm, "")
+    // <script>タグ内に埋め込むため、終了タグ文字列だけ無害化する
+    .replace(/<\/script/gi, "<\\/script");
+
   return `<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="/vendor/react.development.js"></script>
+<script src="/vendor/react-dom.development.js"></script>
+<script src="/vendor/babel.min.js"></script>
 <style>body{margin:0;font-family:system-ui,-apple-system,sans-serif}</style>
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react">
+<script type="text/plain" id="app-source">
 const { useState, useEffect, useRef, useMemo, useCallback, useReducer } = React;
-${jsx}
+${code}
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+<script>
+(function () {
+  var source = document.getElementById('app-source').textContent;
+  try {
+    // automatic JSXランタイム(import文を生成)を避け、グローバルReact/ReactDOMで動く形に変換する
+    var output = Babel.transform(source, {
+      presets: [["react", { runtime: "classic" }]],
+    }).code;
+    (0, eval)(output);
+  } catch (e) {
+    document.getElementById('root').innerHTML =
+      '<pre style="white-space:pre-wrap;color:#dc2626;padding:16px;font-family:monospace">' +
+      String(e && e.stack ? e.stack : e).replace(/</g, '&lt;') +
+      '</pre>';
+  }
+})();
 </script>
 </body>
 </html>`;
@@ -39,6 +68,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 dotenv.config();
 const app = express();
 app.use(express.json());
+app.use("/vendor", express.static(VENDOR_DIR));
 
 const PORT = 3000;
 
@@ -168,6 +198,7 @@ app.get("/preview/:id", async (request, response) => {
   }
 
   const session = await getSession(sessionId);
+  response.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
   if (!session?.current_jsx) {
     response
       .status(200)

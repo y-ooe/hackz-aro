@@ -52,13 +52,13 @@ export function PreviewPanel({
           onChange={(e) => onProjectNameChange(e.target.value)}
           disabled={configLocked}
           placeholder="project-name"
-          className="w-40 rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-1.5 text-sm text-neutral-100 outline-none transition focus:border-violet-500 disabled:opacity-60"
+          className="w-40 rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-1.5 text-sm text-neutral-100 outline-none transition focus:border-neutral-500 disabled:opacity-60"
         />
         <select
           value={targetCloud}
           onChange={(e) => onTargetCloudChange(e.target.value as TargetCloud)}
           disabled={configLocked}
-          className="rounded-lg border border-neutral-800 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100 outline-none transition focus:border-violet-500 disabled:opacity-60"
+          className="rounded-lg border border-neutral-800 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100 outline-none transition focus:border-neutral-500 disabled:opacity-60"
         >
           {CLOUD_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
@@ -71,9 +71,9 @@ export function PreviewPanel({
           type="button"
           onClick={onDeploy}
           disabled={!hasPreview || isDeploying}
-          className="ml-auto flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-neutral-700 disabled:text-neutral-400"
+          className="ml-auto flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-1.5 text-sm font-medium text-white transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-neutral-700 disabled:text-neutral-400"
         >
-          {isDeploying ? '🚀 Deploying…' : status === 'deployed' ? '✓ Deployed' : '🚀 Deploy'}
+          {isDeploying ? 'デプロイ中…' : status === 'deployed' ? 'デプロイ済み' : 'デプロイ'}
         </button>
       </div>
 
@@ -83,9 +83,9 @@ export function PreviewPanel({
           href={deployUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="border-b border-emerald-700/40 bg-emerald-950/40 px-4 py-2 font-mono text-xs text-emerald-300 hover:bg-emerald-950/70"
+          className="border-b border-neutral-800 bg-neutral-900/60 px-4 py-2 font-mono text-xs text-neutral-400 hover:text-neutral-200"
         >
-          ✓ {deployUrl} ↗
+          {deployUrl}
         </a>
       )}
 

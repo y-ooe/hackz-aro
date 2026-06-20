@@ -31,15 +31,10 @@ export function ChatPanel({ messages, isSending, onSend }: ChatPanelProps) {
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-neutral-800 bg-neutral-900/50">
       {/* ヘッダー */}
       <div className="flex items-center gap-2 border-b border-neutral-800 bg-neutral-900/80 px-4 py-3">
-        <span className="text-sm font-semibold text-neutral-100">💬 Chat</span>
-        <span className="text-xs text-neutral-500">
-          AIと対話してアプリを作成・修正
-        </span>
+        <span className="text-sm font-semibold text-neutral-100">チャット</span>
+        <span className="text-xs text-neutral-500">作成・修正の指示はこちらへ</span>
         {isSending && (
-          <span className="ml-auto flex items-center gap-1.5 text-xs text-violet-400">
-            <span className="h-2 w-2 animate-pulse rounded-full bg-violet-400" />
-            thinking
-          </span>
+          <span className="ml-auto text-xs text-neutral-500">応答中…</span>
         )}
       </div>
 
@@ -83,13 +78,13 @@ export function ChatPanel({ messages, isSending, onSend }: ChatPanelProps) {
             disabled={isSending}
             rows={2}
             placeholder="メッセージを入力 (Enterで送信 / Shift+Enterで改行)"
-            className="max-h-32 flex-1 resize-none rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 outline-none transition focus:border-violet-500 focus:ring-1 focus:ring-violet-500/40 disabled:opacity-50"
+            className="max-h-32 flex-1 resize-none rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 outline-none transition focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500/40 disabled:opacity-50"
           />
           <button
             type="button"
             onClick={submit}
             disabled={!canSend}
-            className="rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:bg-neutral-700 disabled:text-neutral-400"
+            className="rounded-lg bg-neutral-100 px-4 py-2.5 text-sm font-medium text-neutral-900 transition hover:bg-white disabled:cursor-not-allowed disabled:bg-neutral-700 disabled:text-neutral-400"
           >
             送信
           </button>
@@ -104,10 +99,10 @@ function Bubble({ message }: { message: ChatMessage }) {
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
-        className={`max-w-[85%] whitespace-pre-wrap break-words rounded-2xl px-4 py-2.5 leading-relaxed ${
+        className={`max-w-[85%] whitespace-pre-wrap break-words rounded-lg px-4 py-2.5 leading-relaxed ${
           isUser
-            ? 'rounded-br-sm bg-violet-600 text-white'
-            : 'rounded-bl-sm bg-neutral-800 text-neutral-100'
+            ? 'bg-neutral-700 text-neutral-100'
+            : 'bg-neutral-800/60 text-neutral-200'
         }`}
       >
         {message.content}
