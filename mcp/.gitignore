@@ -65,5 +65,5 @@ package-lock.json
 *v8.log
 /lib/
 
-# memo.txt
-# /dist
+memo.txt
+/dist
