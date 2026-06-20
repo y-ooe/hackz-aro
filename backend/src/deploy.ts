@@ -1,32 +1,19 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { renderPreviewHtml } from "./renderPreview.js";
+import { deployHtml } from "./deployHtml.js";
+import { makeBucketName } from "./deployStaticSite.js";
 
 export interface DeployResult {
   url: string;
 }
 
-/** 生成物の保存先ディレクトリ */
-export const GENERATED_DIR = path.resolve(import.meta.dirname, "../generated");
-
-/** プロジェクト名をファイル名として安全な形に整える */
-function sanitizeName(name: string): string {
-  const cleaned = name
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-  return cleaned || "app";
-}
-
 /**
- * 生成したアプリ(.jsx)をデプロイする。
+ * 生成したアプリ(.jsx)を S3 にデプロイする。
  *
- * 現状は、生成された .jsx と、それを単一HTMLに包んだ .html を
- * generated/ フォルダに保存する(DBは使わない)。
+ * 1. JSX を、CDN参照の単一HTML(どの環境でも動く)に包む
+ * 2. deployHtml() で S3 バケットを用意し index.html として公開アップロード
+ * 3. 公開URLを返す
  *
- * TODO(相方): ここで保存した .html を AWS(S3/CloudFront 等)へ配置し、
- *             公開URLを deployUrl として返す。
+ * AWS認証情報・リージョンは環境変数(.env: AWS_REGION / AWS_ACCESS_KEY_ID など)を使う。
  */
 export async function deployApp(
   projectName: string,
@@ -36,18 +23,17 @@ export async function deployApp(
     throw new Error("デプロイ対象のアプリがまだ生成されていません");
   }
 
-  const safeName = sanitizeName(projectName);
-  await mkdir(GENERATED_DIR, { recursive: true });
+  // 1. デプロイ可能な単一HTMLを生成
+  const html = renderPreviewHtml(jsx);
 
-  const jsxPath = path.join(GENERATED_DIR, `${safeName}.jsx`);
-  const htmlPath = path.join(GENERATED_DIR, `${safeName}.html`);
-  await writeFile(jsxPath, jsx, "utf-8");
-  await writeFile(htmlPath, renderPreviewHtml(jsx), "utf-8");
-  console.log(`Deployed: ${jsxPath} / ${htmlPath} を保存しました`);
+  // 2. S3 に公開アップロード(バケット名はプロジェクト名から一意に生成)
+  const result = await deployHtml({
+    html,
+    bucketName: makeBucketName(projectName),
+  });
 
-  // --- ここに相方のAWSデプロイAPI呼び出しが入る想定 ---
-  // const deployUrl = await uploadToAws(htmlPath);
-  const deployUrl = `(ローカル保存) generated/${safeName}.html`;
+  console.log(`Deployed to S3: ${result.url}`);
 
-  return { url: deployUrl };
+  // 3. 公開URLを返す
+  return { url: result.url };
 }
