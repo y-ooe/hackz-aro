@@ -1,21 +1,15 @@
-import dotenv from "dotenv";
-import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod/v4";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 
-dotenv.config();
+import { anthropic } from "../lib/anthropic.js";
+
+const MODEL = "claude-opus-4-8";
 
 /** チャット1メッセージ(DBに依存しない最小形) */
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
 }
-
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
-
-const MODEL = "claude-opus-4-8";
 
 const ResultSchema = z.object({
   reply: z
@@ -60,13 +54,6 @@ const SYSTEM_PROMPT = [
 ].join("\n");
 
 /**
- * チャット履歴と現在のコードを踏まえて、Reactアプリを生成または修正する。
- *
- * @param history    これまでの会話(古い順)
- * @param currentJsx 現在の生成コード(.jsx, 無ければ null)
- * @param userMessage 今回のユーザー発言
- */
-/**
  * モデルが日本語・絵文字を \uXXXX / \u{XXXXX} でエスケープして返すことがある。
  * JSXのタグ内ではこれが構文エラーや文字化けになるため、実際の文字へ戻す。
  */
@@ -80,12 +67,19 @@ export function decodeUnicodeEscapes(s: string): string {
     );
 }
 
+/**
+ * チャット履歴と現在のコードを踏まえて、Reactアプリを生成または修正する。
+ *
+ * @param history     これまでの会話(古い順)
+ * @param currentJsx  現在の生成コード(.jsx, 無ければ null)
+ * @param userMessage 今回のユーザー発言
+ */
 export async function generateOrEditApp(
   history: ChatMessage[],
   currentJsx: string | null,
   userMessage: string
 ): Promise<AgentResult> {
-  const messages: Anthropic.MessageParam[] = history.map((m) => ({
+  const messages = history.map((m) => ({
     role: m.role,
     content: m.content,
   }));

@@ -1,4 +1,4 @@
-import { renderPreviewHtml } from "./renderPreview.js";
+import { renderPreviewHtml } from "../renderPreview.js";
 import { deployHtml } from "./deployHtml.js";
 import { makeBucketName } from "./deployStaticSite.js";
 

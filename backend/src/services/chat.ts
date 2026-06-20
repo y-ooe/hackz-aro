@@ -1,16 +1,11 @@
-import dotenv from "dotenv";
-import Anthropic from "@anthropic-ai/sdk";
 import type { Tool, MessageParam } from "@anthropic-ai/sdk/resources/messages";
+
+import { anthropic } from "../lib/anthropic.js";
 import { getMcpClient } from "./mcpClient.js";
-
-dotenv.config();
-
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
 
 const MODEL = "claude-sonnet-4-6";
 
+/** MCPツール(topaz.dev等)を使ってユーザーの問い合わせに答える。 */
 export async function chatWithTools(userMessage: string): Promise<string> {
   const mcp = await getMcpClient();
   const { tools: mcpTools } = await mcp.listTools();
@@ -21,9 +16,7 @@ export async function chatWithTools(userMessage: string): Promise<string> {
     input_schema: t.inputSchema as Tool["input_schema"],
   }));
 
-  const messages: MessageParam[] = [
-    { role: "user", content: userMessage },
-  ];
+  const messages: MessageParam[] = [{ role: "user", content: userMessage }];
 
   while (true) {
     const response = await anthropic.messages.create({
