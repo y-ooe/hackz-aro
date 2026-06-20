@@ -21,3 +21,5 @@ benchmarks/graphs
 
 memo.txt
 dist
+
+.env
