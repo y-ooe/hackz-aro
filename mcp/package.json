@@ -1,0 +1,21 @@
+{
+  "name": "hackz-aro-mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "MCP server for referencing web content",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "cheerio": "^1.0.0",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.21",
+    "typescript": "^5.9.3"
+  }
+}
