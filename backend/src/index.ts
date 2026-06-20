@@ -19,12 +19,14 @@ import { deployStaticSite, makeBucketName } from './deployStaticSite.js';
 import { deployHtml } from './deployHtml.js';
 
 
-const TARGET_CLOUDS: TargetCloud[] = ["vercel", "aws", "gcp", "cloudflare"];
-
 dotenv.config();
+
 const app = express();
-app.use(express.json({ limit: '5mb' }));
 const VENDOR_DIR = path.resolve(import.meta.dirname, "../public/vendor");
+
+app.use(express.json({ limit: '5mb' }));
+app.use("/vendor", express.static(VENDOR_DIR));
+
 
 /** 純粋なReactコンポーネント(.jsx)を、Babelで動く単一HTMLに包む */
 function renderPreviewHtml(jsx: string): string {
@@ -74,11 +76,6 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 </body>
 </html>`;
 }
-
-dotenv.config();
-const app = express();
-app.use(express.json());
-app.use("/vendor", express.static(VENDOR_DIR));
 
 const PORT = 3000;
 
@@ -234,12 +231,6 @@ app.post('/deploy-html', async (req, res) => {
   }
 });
 
-
-app.listen(PORT, () => {
-  console.log("Server running at PORT: ", PORT);
-}).on("error", (error) => {
-  throw new Error(error.message);
-});
 // === セッション削除 ===
 app.delete("/api/sessions/:id", async (request, response) => {
   const sessionId = Number(request.params.id);
@@ -335,3 +326,11 @@ initDb()
     console.error("DB初期化に失敗しました:", error);
     process.exit(1);
   });
+
+
+  
+app.listen(PORT, () => {
+  console.log("Server running at PORT: ", PORT);
+}).on("error", (error) => {
+  throw new Error(error.message);
+});
