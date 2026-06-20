@@ -12,13 +12,12 @@ export interface ChatMessage {
 /** セッションの状態 */
 export type SessionStatus = 'draft' | 'deployed'
 
-/** GET /api/sessions/:id のレスポンス */
-export interface SessionState {
-  sessionId: number
+/** localStorage に保存する、画面の全状態(DB代わり) */
+export interface PersistedState {
   projectName: string
   targetCloud: TargetCloud
+  messages: ChatMessage[]
+  currentJsx: string | null
   status: SessionStatus
   deployUrl: string | null
-  hasPreview: boolean
-  messages: ChatMessage[]
 }
