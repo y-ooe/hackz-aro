@@ -3,82 +3,98 @@ import dotenv from "dotenv";
 import path from "node:path";
 
 import { chatWithTools } from "./claude.js";
-import { runDeploy, GENERATED_DIR, type TargetCloud } from "./deploy.js";
+import { generateOrEditApp, type ChatMessage } from "./agent.js";
+import { deployApp } from "./deploy.js";
 
 import { deployStaticSite, makeBucketName } from './deployStaticSite.js';
 import { deployHtml } from './deployHtml.js';
 
 
-const TARGET_CLOUDS: TargetCloud[] = ["vercel", "aws", "gcp", "cloudflare"];
-
 dotenv.config();
+
 const app = express();
+const VENDOR_DIR = path.resolve(import.meta.dirname, "../public/vendor");
+
 app.use(express.json({ limit: '5mb' }));
+app.use("/vendor", express.static(VENDOR_DIR));
 
 const PORT = 3000;
 
-app.get("/", (request, response) => {
+app.get("/", (_request, response) => {
   response.status(200).send("Hello World");
 });
 
-app.post("/api/chat", async (request, response) => {
-  const { message } = request.body;
+// === チャット（生成・修正）: ステートレス NDJSONストリーム ===
+// 状態はフロント側(React state / localStorage)が保持し、毎回まとめて送ってくる。
+app.post("/api/generate", async (request, response) => {
+  const { messages, currentJsx, message } = request.body ?? {};
 
   if (typeof message !== "string" || !message.trim()) {
     response.status(400).json({ error: "message is required" });
     return;
   }
 
-  try {
-    const reply = await chatWithTools(message);
-    response.status(200).json({ reply });
-  } catch (error) {
-    console.error(error);
-    response.status(500).json({ error: "internal server error" });
-  }
-});
+  // これまでの会話履歴(role/contentのみ採用)
+  const history: ChatMessage[] = Array.isArray(messages)
+    ? messages
+        .filter(
+          (m: unknown): m is ChatMessage =>
+            !!m &&
+            typeof (m as ChatMessage).content === "string" &&
+            ((m as ChatMessage).role === "user" ||
+              (m as ChatMessage).role === "assistant")
+        )
+        .map((m) => ({ role: m.role, content: m.content }))
+    : [];
 
-app.post("/api/deploy", async (request, response) => {
-  const { projectName, targetCloud, prompt } = request.body ?? {};
-
-  if (typeof prompt !== "string" || !prompt.trim()) {
-    response.status(400).json({ error: "prompt is required" });
-    return;
-  }
-
-  const cloud: TargetCloud = TARGET_CLOUDS.includes(targetCloud)
-    ? targetCloud
-    : "vercel";
+  const jsx: string | null = typeof currentJsx === "string" ? currentJsx : null;
 
   response.setHeader("Content-Type", "application/x-ndjson");
   response.setHeader("Cache-Control", "no-cache");
   response.flushHeaders();
 
+  const write = (obj: unknown) => response.write(JSON.stringify(obj) + "\n");
+
   try {
-    await runDeploy(
-      { projectName: typeof projectName === "string" ? projectName : "", targetCloud: cloud, prompt },
-      (line) => response.write(line + "\n")
-    );
+    const result = await generateOrEditApp(history, jsx, message);
+
+    write({ type: "reply", text: result.reply });
+
+    if (result.jsx) {
+      // 更新後のJSX全文をフロントへ返す(フロントが保持・プレビュー描画する)
+      write({ type: "jsx", text: result.jsx });
+    }
   } catch (error) {
     console.error(error);
-    response.write(
-      JSON.stringify({ level: "error", message: "デプロイ処理中にエラーが発生しました" }) + "\n"
-    );
+    write({ type: "error", text: "生成処理中にエラーが発生しました" });
   } finally {
     response.end();
   }
 });
 
-// 生成されたアプリ(単一HTML)を配信する。完了URLのリンク先。
-app.get("/preview/:name", (request, response) => {
-  const safe = (request.params.name ?? "").replace(/[^a-z0-9-]/gi, "");
-  if (!safe) {
-    response.status(404).send("Not found");
+// === デプロイ（ステートレス・スタブ） ===
+app.post("/api/deploy-app", async (request, response) => {
+  const { projectName, jsx } = request.body ?? {};
+
+  if (typeof jsx !== "string" || !jsx.trim()) {
+    response.status(400).json({ error: "デプロイ対象のアプリがありません" });
     return;
   }
-  response.sendFile(path.join(GENERATED_DIR, `${safe}.html`), (err) => {
-    if (err) response.status(404).send("生成されたアプリが見つかりません");
-  });
+
+  const name =
+    typeof projectName === "string" && projectName.trim()
+      ? projectName.trim()
+      : "my-app";
+
+  try {
+    const result = await deployApp(name, jsx);
+    response.status(200).json(result);
+  } catch (error) {
+    console.error(error);
+    const message =
+      error instanceof Error ? error.message : "デプロイに失敗しました";
+    response.status(500).json({ error: message });
+  }
 });
 
 // react-scripts でビルドした静的サイトを S3 にデプロイするパス
@@ -132,6 +148,21 @@ app.post('/deploy-html', async (req, res) => {
   }
 });
 
+// === topaz.dev アイデア検索チャット（既存・残置） ===
+app.post("/api/chat", async (request, response) => {
+  const { message } = request.body ?? {};
+  if (typeof message !== "string" || !message.trim()) {
+    response.status(400).json({ error: "message is required" });
+    return;
+  }
+  try {
+    const reply = await chatWithTools(message);
+    response.status(200).json({ reply });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: "internal server error" });
+  }
+});
 
 app.listen(PORT, () => {
   console.log("Server running at PORT: ", PORT);

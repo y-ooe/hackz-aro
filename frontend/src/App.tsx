@@ -1,167 +1,208 @@
-import { useCallback, useState } from 'react'
-import { InputPanel } from './components/InputPanel'
-import { LogConsole } from './components/LogConsole'
-import { ResultPanel } from './components/ResultPanel'
-import { runMockStream } from './mockStream'
-import type { DeployRequest, LogEntry, LogLevel, TargetCloud } from './types'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { ChatPanel } from './components/ChatPanel'
+import { PreviewPanel } from './components/PreviewPanel'
+import type {
+  ChatMessage,
+  PersistedState,
+  SessionStatus,
+  TargetCloud,
+} from './types'
 
-// === モック / 本番 の切り替えフラグ ===
-// true  : バックエンド未接続でも動くモックストリームを使用(デモ用)
-// false : 本番。実際に POST /api/deploy へリクエストする
-// 環境変数 VITE_USE_MOCK=false を .env に設定すると本番モードになる。
-const USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false'
+// DBの代わりに、画面の全状態を localStorage に保存する
+const STORAGE_KEY = 'infra-agent-state'
 
 function App() {
-  // === State 管理 ===
-  const [prompt, setPrompt] = useState('')
-  const [projectName, setProjectName] = useState('')
+  const [projectName, setProjectName] = useState('my-app')
   const [targetCloud, setTargetCloud] = useState<TargetCloud>('vercel')
-  const [isGenerating, setIsGenerating] = useState(false)
-  const [logs, setLogs] = useState<LogEntry[]>([])
-  const [resultUrl, setResultUrl] = useState<string | null>(null)
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [currentJsx, setCurrentJsx] = useState<string | null>(null)
+  const [previewKey, setPreviewKey] = useState(0)
+  const [status, setStatus] = useState<SessionStatus>('draft')
+  const [deployUrl, setDeployUrl] = useState<string | null>(null)
+  const [isSending, setIsSending] = useState(false)
+  const [isDeploying, setIsDeploying] = useState(false)
 
-  /** ログを1行追加するヘルパー */
-  const appendLog = useCallback((level: LogLevel, message: string) => {
-    setLogs((prev) => [...prev, { level, message, timestamp: Date.now() }])
+  // 初回ロードでの復元が終わるまでは保存しない(空状態の上書き防止)
+  const restored = useRef(false)
+
+  // リロード時: localStorage から状態を復帰
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY)
+      if (saved) {
+        const s = JSON.parse(saved) as Partial<PersistedState>
+        setProjectName(s.projectName ?? 'my-app')
+        setTargetCloud(s.targetCloud ?? 'vercel')
+        setMessages(s.messages ?? [])
+        setCurrentJsx(s.currentJsx ?? null)
+        setStatus(s.status ?? 'draft')
+        setDeployUrl(s.deployUrl ?? null)
+        if (s.currentJsx) setPreviewKey(Date.now())
+      }
+    } catch {
+      localStorage.removeItem(STORAGE_KEY)
+    }
+    restored.current = true
   }, [])
 
-  /**
-   * 「Generate & Deploy」実行ハンドラ。
-   * POST /api/deploy にリクエストを送り、バックエンドからストリーミングで
-   * 送られてくる実行ログを順次 logs State に追加していく。
-   */
-  const handleGenerate = useCallback(async () => {
-    if (isGenerating) return
+  // 状態が変わるたびに localStorage へ保存
+  useEffect(() => {
+    if (!restored.current) return
+    const state: PersistedState = {
+      projectName,
+      targetCloud,
+      messages,
+      currentJsx,
+      status,
+      deployUrl,
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+  }, [projectName, targetCloud, messages, currentJsx, status, deployUrl])
 
-    // 実行開始: 状態をリセット
-    setIsGenerating(true)
-    setLogs([])
-    setResultUrl(null)
-    appendLog('info', `Starting build for "${projectName}" → ${targetCloud}`)
+  /** チャット送信 */
+  const handleSend = useCallback(
+    async (text: string) => {
+      if (isSending) return
+      setIsSending(true)
+      // 送信時点の履歴をサーバーに渡す(新規発言は含めない)
+      const history = messages
+      setMessages((prev) => [...prev, { role: 'user', content: text }])
 
-    const body: DeployRequest = { projectName, targetCloud, prompt }
-
-    try {
-      if (USE_MOCK) {
-        // -----------------------------------------------------------------
-        // モック: バックエンド未接続でもUIを確認できるデモ用ストリーム。
-        // 本番と同じ handleStreamChunk でパースされる。
-        // -----------------------------------------------------------------
-        await runMockStream(body, handleStreamChunk)
-      } else {
-        // -----------------------------------------------------------------
-        // 本番: バックエンド(Express)へのストリーミングリクエスト
-        // -----------------------------------------------------------------
-        const response = await fetch('/api/deploy', {
+      try {
+        const res = await fetch('/api/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
+          body: JSON.stringify({ messages: history, currentJsx, message: text }),
         })
+        if (!res.ok || !res.body) throw new Error(`Request failed: ${res.status}`)
 
-        if (!response.ok || !response.body) {
-          throw new Error(`Request failed: ${response.status}`)
-        }
-
-        // fetch の ReadableStream を逐次読み取り、行(NDJSON)ごとに処理する。
-        // バックエンドは 1行 = 1つのJSONログ ({ level, message } / 完了時は { url })
-        // を改行区切りで流す想定。SSE の場合は "data: " プレフィックスを剥がす。
-        const reader = response.body.getReader()
+        // NDJSON を逐次読み取り
+        const reader = res.body.getReader()
         const decoder = new TextDecoder()
         let buffer = ''
+
+        const handleLine = (line: string) => {
+          const trimmed = line.trim()
+          if (!trimmed) return
+          try {
+            const event = JSON.parse(trimmed) as { type: string; text?: string }
+            if (event.type === 'reply' && event.text) {
+              setMessages((prev) => [
+                ...prev,
+                { role: 'assistant', content: event.text! },
+              ])
+            } else if (event.type === 'jsx' && event.text) {
+              // 更新後のJSXを保持し、プレビューを差し替える
+              setCurrentJsx(event.text)
+              setStatus('draft') // 修正したので未デプロイ扱いに戻す
+              setDeployUrl(null)
+              setPreviewKey(Date.now())
+            } else if (event.type === 'error' && event.text) {
+              setMessages((prev) => [
+                ...prev,
+                { role: 'assistant', content: `エラー: ${event.text}` },
+              ])
+            }
+          } catch {
+            // パースできない行は無視
+          }
+        }
 
         while (true) {
           const { done, value } = await reader.read()
           if (done) break
-
           buffer += decoder.decode(value, { stream: true })
           const lines = buffer.split('\n')
-          // 最後の要素は未完の行かもしれないのでバッファに残す
           buffer = lines.pop() ?? ''
-
-          for (const line of lines) {
-            const trimmed = line.trim()
-            if (!trimmed) continue
-            handleStreamChunk(trimmed)
-          }
+          for (const line of lines) handleLine(line)
         }
-        // 残ったバッファを処理
-        if (buffer.trim()) handleStreamChunk(buffer.trim())
+        if (buffer.trim()) handleLine(buffer)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: `エラー: ${msg}` },
+        ])
+      } finally {
+        setIsSending(false)
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      appendLog('error', `Deployment failed: ${message}`)
-    } finally {
-      setIsGenerating(false)
-    }
-  }, [appendLog, isGenerating, projectName, prompt, targetCloud])
+    },
+    [messages, currentJsx, isSending]
+  )
 
-  /**
-   * ストリームから受信した1行(JSON文字列)をパースして State に反映する。
-   * - { level, message } → ログに追加
-   * - { url } → 完了URLとして resultUrl に格納
-   */
-  function handleStreamChunk(raw: string) {
-    // SSE 形式("data: {...}")にも一応対応
-    const json = raw.startsWith('data:') ? raw.slice(5).trim() : raw
+  /** デプロイ */
+  const handleDeploy = useCallback(async () => {
+    if (!currentJsx || isDeploying) return
+    setIsDeploying(true)
     try {
-      const event = JSON.parse(json) as {
-        level?: LogLevel
-        message?: string
-        url?: string
-      }
-      if (event.url) {
-        setResultUrl(event.url)
-        appendLog('success', `Deployed: ${event.url}`)
-      } else if (event.message) {
-        appendLog(event.level ?? 'info', event.message)
-      }
-    } catch {
-      // JSONでなければそのまま info ログとして表示
-      appendLog('info', raw)
+      const res = await fetch('/api/deploy-app', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectName, jsx: currentJsx }),
+      })
+      const data = (await res.json()) as { url?: string; error?: string }
+      if (!res.ok) throw new Error(data.error ?? 'デプロイに失敗しました')
+      setStatus('deployed')
+      setDeployUrl(data.url ?? null)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: `デプロイ失敗: ${msg}` },
+      ])
+    } finally {
+      setIsDeploying(false)
     }
-  }
+  }, [currentJsx, projectName, isDeploying])
+
+  /** 現在の状態を破棄して、新規状態にリセットする */
+  const handleNewSession = useCallback(() => {
+    localStorage.removeItem(STORAGE_KEY)
+    setMessages([])
+    setCurrentJsx(null)
+    setStatus('draft')
+    setDeployUrl(null)
+    setPreviewKey(Date.now())
+  }, [])
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-200">
+    <div className="flex h-screen flex-col bg-neutral-950 text-neutral-200">
       {/* ヘッダー */}
       <header className="flex items-center gap-3 border-b border-neutral-800 px-6 py-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-600 text-lg">
-          ⚡
-        </div>
         <div>
-          <h1 className="text-base font-semibold text-neutral-100">
-            Infra Agent
-          </h1>
-          <p className="text-xs text-neutral-500">
-            AI-powered infrastructure builder
-          </p>
+          <h1 className="text-base font-semibold text-neutral-100">Infra Agent</h1>
+          <p className="text-xs text-neutral-500">要望を伝えてアプリを作成・プレビュー・デプロイ</p>
         </div>
-        <span className="ml-auto rounded-full border border-neutral-800 px-3 py-1 text-xs text-neutral-400">
-          MCP enabled
-        </span>
+        <button
+          type="button"
+          onClick={handleNewSession}
+          disabled={isSending}
+          className="ml-auto rounded-lg border border-neutral-700 px-3 py-1.5 text-xs font-medium text-neutral-300 transition hover:border-red-500/60 hover:bg-red-950/30 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          リセット
+        </button>
       </header>
 
-      {/* メイン: 左=入力 / 右=コンソール */}
-      <main className="grid grid-cols-1 gap-5 p-6 lg:h-[calc(100vh-69px)] lg:grid-cols-[minmax(360px,420px)_1fr]">
-        {/* 左カラム */}
-        <div className="flex min-h-0 flex-col gap-5 lg:overflow-y-auto">
-          <InputPanel
-            projectName={projectName}
-            onProjectNameChange={setProjectName}
-            targetCloud={targetCloud}
-            onTargetCloudChange={setTargetCloud}
-            prompt={prompt}
-            onPromptChange={setPrompt}
-            isGenerating={isGenerating}
-            onGenerate={handleGenerate}
-          />
-          <ResultPanel resultUrl={resultUrl} />
-        </div>
-
-        {/* 右カラム: ログコンソール */}
-        <div className="min-h-[420px] lg:min-h-0">
-          <LogConsole logs={logs} isGenerating={isGenerating} />
-        </div>
+      {/* メイン: 左=プレビュー / 右=チャット */}
+      <main className="grid min-h-0 flex-1 grid-cols-1 gap-5 p-6 lg:grid-cols-[1fr_minmax(360px,440px)]">
+        <PreviewPanel
+          jsx={currentJsx}
+          previewKey={previewKey}
+          projectName={projectName}
+          onProjectNameChange={setProjectName}
+          targetCloud={targetCloud}
+          onTargetCloudChange={setTargetCloud}
+          configLocked={false}
+          status={status}
+          deployUrl={deployUrl}
+          isDeploying={isDeploying}
+          onDeploy={handleDeploy}
+        />
+        <ChatPanel
+          messages={messages}
+          isSending={isSending}
+          onSend={handleSend}
+        />
       </main>
     </div>
   )
