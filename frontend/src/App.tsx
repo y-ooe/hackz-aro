@@ -174,8 +174,8 @@ function App() {
       {/* ヘッダー */}
       <header className="flex items-center gap-3 border-b border-neutral-800 px-6 py-4">
         <div>
-          <h1 className="text-base font-semibold text-neutral-100">Infra Agent</h1>
-          <p className="text-xs text-neutral-500">要望を伝えてアプリを作成・プレビュー・デプロイ</p>
+          <h1 className="text-base font-semibold text-neutral-100">Infract</h1>
+          <p className="text-xs text-neutral-500">全部つくるぜ！！！</p>
         </div>
         <button
           type="button"
