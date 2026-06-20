@@ -1,6 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
 import path from "node:path";
+
 import { chatWithTools } from "./claude.js";
 import { generateOrEditApp, decodeUnicodeEscapes } from "./agent.js";
 import { deployApp } from "./deploy.js";
@@ -14,6 +15,15 @@ import {
   deleteSession,
 } from "./db.js";
 
+import { deployStaticSite, makeBucketName } from './deployStaticSite.js';
+import { deployHtml } from './deployHtml.js';
+
+
+const TARGET_CLOUDS: TargetCloud[] = ["vercel", "aws", "gcp", "cloudflare"];
+
+dotenv.config();
+const app = express();
+app.use(express.json({ limit: '5mb' }));
 const VENDOR_DIR = path.resolve(import.meta.dirname, "../public/vendor");
 
 /** 純粋なReactコンポーネント(.jsx)を、Babelで動く単一HTMLに包む */
@@ -173,6 +183,63 @@ app.get("/api/sessions/:id", async (request, response) => {
   });
 });
 
+// react-scripts でビルドした静的サイトを S3 にデプロイするパス
+app.post('/deploy', async (req, res) => {
+  const { projectDir, appName } = req.body as { projectDir?: string; appName?: string };
+
+  if (!projectDir) {
+    return res.status(400).json({ error: 'projectDir は必須です' });
+  }
+
+  try {
+    const result = await deployStaticSite({
+      projectDir,
+      bucketName: makeBucketName(appName ?? 'app'),
+      // region は env (AWS_REGION) で指定。未指定なら東京(ap-northeast-1)
+    });
+    // result.url をフロントに返せば、そのままアクセスできる
+    res.json(result);
+  } catch (err) {
+    console.error('[deploy] 失敗:', err);
+    res.status(500).json({
+      error: err instanceof Error ? err.message : 'デプロイに失敗しました',
+    });
+  }
+});
+
+// 単一HTMLファイルを S3 にデプロイするパス
+app.post('/deploy-html', async (req, res) => {
+  const { html, htmlPath, appName } = req.body as {
+    html?: string;
+    htmlPath?: string;
+    appName?: string;
+  };
+
+  if (!html && !htmlPath) {
+    return res.status(400).json({ error: 'html か htmlPath のどちらかが必要です' });
+  }
+
+  try {
+    const result = await deployHtml({
+      ...(html !== undefined && { html }),
+      ...(htmlPath !== undefined && { htmlPath }),
+      bucketName: makeBucketName(appName ?? 'app'),
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('[deploy-html] 失敗:', err);
+    res.status(500).json({
+      error: err instanceof Error ? err.message : 'デプロイに失敗しました',
+    });
+  }
+});
+
+
+app.listen(PORT, () => {
+  console.log("Server running at PORT: ", PORT);
+}).on("error", (error) => {
+  throw new Error(error.message);
+});
 // === セッション削除 ===
 app.delete("/api/sessions/:id", async (request, response) => {
   const sessionId = Number(request.params.id);
