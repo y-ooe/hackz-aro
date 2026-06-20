@@ -1,73 +1,78 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChatPanel } from './components/ChatPanel'
 import { PreviewPanel } from './components/PreviewPanel'
-import type { ChatMessage, SessionState, SessionStatus, TargetCloud } from './types'
+import type {
+  ChatMessage,
+  PersistedState,
+  SessionStatus,
+  TargetCloud,
+} from './types'
 
-const STORAGE_KEY = 'infra-agent-session-id'
+// DBの代わりに、画面の全状態を localStorage に保存する
+const STORAGE_KEY = 'infra-agent-state'
 
 function App() {
-  const [sessionId, setSessionId] = useState<number | null>(null)
   const [projectName, setProjectName] = useState('my-app')
   const [targetCloud, setTargetCloud] = useState<TargetCloud>('vercel')
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [currentJsx, setCurrentJsx] = useState<string | null>(null)
   const [previewKey, setPreviewKey] = useState(0)
-  const [hasPreview, setHasPreview] = useState(false)
   const [status, setStatus] = useState<SessionStatus>('draft')
   const [deployUrl, setDeployUrl] = useState<string | null>(null)
   const [isSending, setIsSending] = useState(false)
   const [isDeploying, setIsDeploying] = useState(false)
 
-  // リロード時: localStorage に保存した sessionId から状態を復帰
-  useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY)
-    if (!saved) return
-    const id = Number(saved)
-    if (!Number.isInteger(id)) return
+  // 初回ロードでの復元が終わるまでは保存しない(空状態の上書き防止)
+  const restored = useRef(false)
 
-    fetch(`/api/sessions/${id}`)
-      .then((res) => (res.ok ? res.json() : Promise.reject()))
-      .then((state: SessionState) => {
-        setSessionId(state.sessionId)
-        setProjectName(state.projectName)
-        setTargetCloud(state.targetCloud)
-        setMessages(state.messages)
-        setHasPreview(state.hasPreview)
-        setStatus(state.status)
-        setDeployUrl(state.deployUrl)
-        if (state.hasPreview) setPreviewKey(Date.now())
-      })
-      .catch(() => localStorage.removeItem(STORAGE_KEY))
+  // リロード時: localStorage から状態を復帰
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY)
+      if (saved) {
+        const s = JSON.parse(saved) as Partial<PersistedState>
+        setProjectName(s.projectName ?? 'my-app')
+        setTargetCloud(s.targetCloud ?? 'vercel')
+        setMessages(s.messages ?? [])
+        setCurrentJsx(s.currentJsx ?? null)
+        setStatus(s.status ?? 'draft')
+        setDeployUrl(s.deployUrl ?? null)
+        if (s.currentJsx) setPreviewKey(Date.now())
+      }
+    } catch {
+      localStorage.removeItem(STORAGE_KEY)
+    }
+    restored.current = true
   }, [])
 
-  /** 必要ならセッションを作成し、その id を返す */
-  const ensureSession = useCallback(async (): Promise<number> => {
-    if (sessionId) return sessionId
-    const res = await fetch('/api/sessions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectName, targetCloud }),
-    })
-    if (!res.ok) throw new Error('セッションの作成に失敗しました')
-    const { sessionId: id } = (await res.json()) as { sessionId: number }
-    setSessionId(id)
-    localStorage.setItem(STORAGE_KEY, String(id))
-    return id
-  }, [sessionId, projectName, targetCloud])
+  // 状態が変わるたびに localStorage へ保存
+  useEffect(() => {
+    if (!restored.current) return
+    const state: PersistedState = {
+      projectName,
+      targetCloud,
+      messages,
+      currentJsx,
+      status,
+      deployUrl,
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+  }, [projectName, targetCloud, messages, currentJsx, status, deployUrl])
 
   /** チャット送信 */
   const handleSend = useCallback(
     async (text: string) => {
       if (isSending) return
       setIsSending(true)
+      // 送信時点の履歴をサーバーに渡す(新規発言は含めない)
+      const history = messages
       setMessages((prev) => [...prev, { role: 'user', content: text }])
 
       try {
-        const id = await ensureSession()
-
-        const res = await fetch(`/api/sessions/${id}/chat`, {
+        const res = await fetch('/api/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text }),
+          body: JSON.stringify({ messages: history, currentJsx, message: text }),
         })
         if (!res.ok || !res.body) throw new Error(`Request failed: ${res.status}`)
 
@@ -80,17 +85,15 @@ function App() {
           const trimmed = line.trim()
           if (!trimmed) return
           try {
-            const event = JSON.parse(trimmed) as {
-              type: string
-              text?: string
-            }
+            const event = JSON.parse(trimmed) as { type: string; text?: string }
             if (event.type === 'reply' && event.text) {
               setMessages((prev) => [
                 ...prev,
                 { role: 'assistant', content: event.text! },
               ])
-            } else if (event.type === 'preview_updated') {
-              setHasPreview(true)
+            } else if (event.type === 'jsx' && event.text) {
+              // 更新後のJSXを保持し、プレビューを差し替える
+              setCurrentJsx(event.text)
               setStatus('draft') // 修正したので未デプロイ扱いに戻す
               setDeployUrl(null)
               setPreviewKey(Date.now())
@@ -124,17 +127,18 @@ function App() {
         setIsSending(false)
       }
     },
-    [ensureSession, isSending]
+    [messages, currentJsx, isSending]
   )
 
   /** デプロイ */
   const handleDeploy = useCallback(async () => {
-    if (!sessionId || isDeploying) return
+    if (!currentJsx || isDeploying) return
     setIsDeploying(true)
     try {
-      const res = await fetch(`/api/sessions/${sessionId}/deploy`, {
+      const res = await fetch('/api/deploy-app', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectName, jsx: currentJsx }),
       })
       const data = (await res.json()) as { url?: string; error?: string }
       if (!res.ok) throw new Error(data.error ?? 'デプロイに失敗しました')
@@ -149,25 +153,17 @@ function App() {
     } finally {
       setIsDeploying(false)
     }
-  }, [sessionId, isDeploying])
+  }, [currentJsx, projectName, isDeploying])
 
-  /** 現在のセッションを削除して、新規状態にリセットする */
-  const handleNewSession = useCallback(async () => {
-    if (sessionId) {
-      try {
-        await fetch(`/api/sessions/${sessionId}`, { method: 'DELETE' })
-      } catch {
-        // 削除に失敗してもローカルはリセットする
-      }
-    }
+  /** 現在の状態を破棄して、新規状態にリセットする */
+  const handleNewSession = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY)
-    setSessionId(null)
     setMessages([])
-    setHasPreview(false)
+    setCurrentJsx(null)
     setStatus('draft')
     setDeployUrl(null)
     setPreviewKey(Date.now())
-  }, [sessionId])
+  }, [])
 
   return (
     <div className="flex h-screen flex-col bg-neutral-950 text-neutral-200">
@@ -183,16 +179,15 @@ function App() {
           disabled={isSending}
           className="ml-auto rounded-lg border border-neutral-700 px-3 py-1.5 text-xs font-medium text-neutral-300 transition hover:border-red-500/60 hover:bg-red-950/30 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          セッションを削除
+          リセット
         </button>
       </header>
 
       {/* メイン: 左=プレビュー / 右=チャット */}
       <main className="grid min-h-0 flex-1 grid-cols-1 gap-5 p-6 lg:grid-cols-[1fr_minmax(360px,440px)]">
         <PreviewPanel
-          sessionId={sessionId}
+          jsx={currentJsx}
           previewKey={previewKey}
-          hasPreview={hasPreview}
           projectName={projectName}
           onProjectNameChange={setProjectName}
           targetCloud={targetCloud}

@@ -1,4 +1,6 @@
+import { useMemo } from 'react'
 import type { SessionStatus, TargetCloud } from '../types'
+import { renderPreviewHtml } from '../lib/renderPreview'
 
 const CLOUD_OPTIONS: { value: TargetCloud; label: string }[] = [
   { value: 'vercel', label: 'Vercel' },
@@ -7,12 +9,10 @@ const CLOUD_OPTIONS: { value: TargetCloud; label: string }[] = [
   { value: 'cloudflare', label: 'Cloudflare' },
 ]
 
-const API_ORIGIN = 'http://localhost:3000'
-
 interface PreviewPanelProps {
-  sessionId: number | null
+  /** 現在の生成コード(.jsx)。無ければ null */
+  jsx: string | null
   previewKey: number
-  hasPreview: boolean
   projectName: string
   onProjectNameChange: (value: string) => void
   targetCloud: TargetCloud
@@ -29,9 +29,8 @@ interface PreviewPanelProps {
  * 左カラム: 生成アプリのプレビュー(iframe) + プロジェクト設定 + デプロイボタン。
  */
 export function PreviewPanel({
-  sessionId,
+  jsx,
   previewKey,
-  hasPreview,
   projectName,
   onProjectNameChange,
   targetCloud,
@@ -42,6 +41,12 @@ export function PreviewPanel({
   isDeploying,
   onDeploy,
 }: PreviewPanelProps) {
+  // JSXから、iframeに流し込むプレビューHTMLを生成する
+  const previewHtml = useMemo(
+    () => (jsx ? renderPreviewHtml(jsx) : null),
+    [jsx]
+  )
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-neutral-800 bg-neutral-900/50">
       {/* ヘッダー: プロジェクト設定 + デプロイ */}
@@ -70,7 +75,7 @@ export function PreviewPanel({
         <button
           type="button"
           onClick={onDeploy}
-          disabled={!hasPreview || isDeploying}
+          disabled={!jsx || isDeploying}
           className="ml-auto flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-1.5 text-sm font-medium text-white transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-neutral-700 disabled:text-neutral-400"
         >
           {isDeploying ? 'デプロイ中…' : status === 'deployed' ? 'デプロイ済み' : 'デプロイ'}
@@ -91,10 +96,10 @@ export function PreviewPanel({
 
       {/* プレビュー本体 */}
       <div className="flex-1 bg-white">
-        {sessionId && hasPreview ? (
+        {previewHtml ? (
           <iframe
             key={previewKey}
-            src={`${API_ORIGIN}/preview/${sessionId}?k=${previewKey}`}
+            srcDoc={previewHtml}
             title="preview"
             className="h-full w-full border-0"
             sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"

@@ -2,9 +2,14 @@ import dotenv from "dotenv";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod/v4";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import type { MessageRow } from "./db.js";
 
 dotenv.config();
+
+/** チャット1メッセージ(DBに依存しない最小形) */
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -76,7 +81,7 @@ export function decodeUnicodeEscapes(s: string): string {
 }
 
 export async function generateOrEditApp(
-  history: MessageRow[],
+  history: ChatMessage[],
   currentJsx: string | null,
   userMessage: string
 ): Promise<AgentResult> {

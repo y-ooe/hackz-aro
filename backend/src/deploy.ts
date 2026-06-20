@@ -1,12 +1,12 @@
-import { markSessionDeployed, type SessionRow } from "./db.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { renderPreviewHtml } from "./renderPreview.js";
 
 export interface DeployResult {
   url: string;
 }
 
-/** 生成物(.jsx)の保存先ディレクトリ */
+/** 生成物の保存先ディレクトリ */
 export const GENERATED_DIR = path.resolve(import.meta.dirname, "../generated");
 
 /** プロジェクト名をファイル名として安全な形に整える */
@@ -20,32 +20,34 @@ function sanitizeName(name: string): string {
 }
 
 /**
- * 生成したアプリをデプロイする。
+ * 生成したアプリ(.jsx)をデプロイする。
  *
- * 現状は、生成された .jsx を generated/ フォルダに保存し、
- * セッションを deployed 状態にする。
- * 実際のAWSデプロイ処理は相方が実装するため、ここでは保存までを行う。
+ * 現状は、生成された .jsx と、それを単一HTMLに包んだ .html を
+ * generated/ フォルダに保存する(DBは使わない)。
  *
- * TODO(相方): ここで保存した .jsx を AWS(S3/CloudFront 等)へ配置し、
- *             公開URLを deployUrl として markSessionDeployed に渡す。
+ * TODO(相方): ここで保存した .html を AWS(S3/CloudFront 等)へ配置し、
+ *             公開URLを deployUrl として返す。
  */
-export async function deployApp(session: SessionRow): Promise<DeployResult> {
-  if (!session.current_jsx) {
+export async function deployApp(
+  projectName: string,
+  jsx: string
+): Promise<DeployResult> {
+  if (!jsx) {
     throw new Error("デプロイ対象のアプリがまだ生成されていません");
   }
 
-  // 生成された .jsx をファイルに保存
-  const safeName = sanitizeName(session.project_name);
+  const safeName = sanitizeName(projectName);
   await mkdir(GENERATED_DIR, { recursive: true });
-  const filePath = path.join(GENERATED_DIR, `${safeName}.jsx`);
-  await writeFile(filePath, session.current_jsx, "utf-8");
-  console.log(`Deployed: ${filePath} を保存しました`);
+
+  const jsxPath = path.join(GENERATED_DIR, `${safeName}.jsx`);
+  const htmlPath = path.join(GENERATED_DIR, `${safeName}.html`);
+  await writeFile(jsxPath, jsx, "utf-8");
+  await writeFile(htmlPath, renderPreviewHtml(jsx), "utf-8");
+  console.log(`Deployed: ${jsxPath} / ${htmlPath} を保存しました`);
 
   // --- ここに相方のAWSデプロイAPI呼び出しが入る想定 ---
-  // const deployUrl = await uploadToAws(filePath);
-  const deployUrl = `http://localhost:3000/preview/${session.id}`;
-
-  await markSessionDeployed(session.id, deployUrl);
+  // const deployUrl = await uploadToAws(htmlPath);
+  const deployUrl = `(ローカル保存) generated/${safeName}.html`;
 
   return { url: deployUrl };
 }
