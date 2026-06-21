@@ -1,6 +1,7 @@
 import { Router } from "express";
 
 import { deployApp } from "../services/deploy/deployApp.js";
+import { deployAppEc2 } from "../services/deploy/deployAppEc2.js";
 import {
   deployStaticSite,
   makeBucketName,
@@ -25,6 +26,31 @@ deployRoutes.post("/api/deploy-app", async (request, response) => {
 
   try {
     const result = await deployApp(name, jsx);
+    response.status(200).json(result);
+  } catch (error) {
+    console.error(error);
+    const message =
+      error instanceof Error ? error.message : "デプロイに失敗しました";
+    response.status(500).json({ error: message });
+  }
+});
+
+/** 生成アプリ(.jsx)を単一HTMLにして EC2(nginx) にデプロイする。 */
+deployRoutes.post("/api/deploy-app-ec2", async (request, response) => {
+  const { projectName, jsx } = request.body ?? {};
+
+  if (typeof jsx !== "string" || !jsx.trim()) {
+    response.status(400).json({ error: "デプロイ対象のアプリがありません" });
+    return;
+  }
+
+  const name =
+    typeof projectName === "string" && projectName.trim()
+      ? projectName.trim()
+      : "my-app";
+
+  try {
+    const result = await deployAppEc2(name, jsx);
     response.status(200).json(result);
   } catch (error) {
     console.error(error);

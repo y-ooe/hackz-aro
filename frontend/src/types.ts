@@ -12,6 +12,17 @@ export interface ChatMessage {
 /** セッションの状態 */
 export type SessionStatus = 'draft' | 'deployed'
 
+/** デプロイ時のレアリティ種別 */
+export type Rarity = 'common' | 'rare' | 'ssr'
+
+/** デプロイ時の「サーバー大きさガチャ」結果 */
+export interface DeployGacha {
+  instanceType: string
+  rarity: Rarity
+  rarityLabel: string
+  emoji: string
+}
+
 /** localStorage に保存する、画面の全状態(DB代わり) */
 export interface PersistedState {
   projectName: string
@@ -20,4 +31,5 @@ export interface PersistedState {
   currentJsx: string | null
   status: SessionStatus
   deployUrl: string | null
+  deployGacha: DeployGacha | null
 }

@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { SessionStatus, TargetCloud } from '../types'
+import type { DeployGacha, Rarity, SessionStatus, TargetCloud } from '../types'
 import { renderPreviewHtml } from '../lib/renderPreview'
 
 const CLOUD_OPTIONS: { value: TargetCloud; label: string }[] = [
@@ -8,6 +8,13 @@ const CLOUD_OPTIONS: { value: TargetCloud; label: string }[] = [
   { value: 'gcp', label: 'Google Cloud' },
   { value: 'cloudflare', label: 'Cloudflare' },
 ]
+
+// レアリティごとの見た目(枠線・文字色・背景)
+const RARITY_STYLE: Record<Rarity, string> = {
+  common: 'border-neutral-600 bg-neutral-800/60 text-neutral-200',
+  rare: 'border-sky-500/60 bg-sky-950/40 text-sky-200',
+  ssr: 'border-amber-400/70 bg-amber-950/40 text-amber-200',
+}
 
 interface PreviewPanelProps {
   /** 現在の生成コード(.jsx)。無ければ null */
@@ -21,6 +28,8 @@ interface PreviewPanelProps {
   configLocked: boolean
   status: SessionStatus
   deployUrl: string | null
+  /** デプロイ時に引いた「サーバー大きさガチャ」結果 */
+  deployGacha: DeployGacha | null
   isDeploying: boolean
   onDeploy: () => void
 }
@@ -38,6 +47,7 @@ export function PreviewPanel({
   configLocked,
   status,
   deployUrl,
+  deployGacha,
   isDeploying,
   onDeploy,
 }: PreviewPanelProps) {
@@ -81,6 +91,18 @@ export function PreviewPanel({
           {isDeploying ? 'デプロイ中…' : status === 'deployed' ? 'デプロイ済み' : 'デプロイ'}
         </button>
       </div>
+
+      {/* 「運」: サーバー大きさガチャの結果 */}
+      {status === 'deployed' && deployGacha && (
+        <div
+          className={`flex items-center gap-2 border-b px-4 py-2 text-xs ${RARITY_STYLE[deployGacha.rarity]}`}
+        >
+          <span className="text-base">{deployGacha.emoji}</span>
+          <span className="font-semibold">{deployGacha.rarityLabel}</span>
+          <span className="opacity-70">サーバー: </span>
+          <span className="font-mono">{deployGacha.instanceType}</span>
+        </div>
+      )}
 
       {/* デプロイ完了URL */}
       {status === 'deployed' && deployUrl && (
