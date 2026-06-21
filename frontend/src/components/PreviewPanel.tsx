@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { DeployGacha, Rarity, SessionStatus, TargetCloud } from '../types'
+import type { DeployOutcome, Rarity, SessionStatus, TargetCloud } from '../types'
 import { renderPreviewHtml } from '../lib/renderPreview'
 
 const CLOUD_OPTIONS: { value: TargetCloud; label: string }[] = [
@@ -28,8 +28,8 @@ interface PreviewPanelProps {
   configLocked: boolean
   status: SessionStatus
   deployUrl: string | null
-  /** デプロイ時に引いた「サーバー大きさガチャ」結果 */
-  deployGacha: DeployGacha | null
+  /** デプロイ時に引いた「ガチャ」結果(デプロイ先 + EC2ならサーバー大きさ) */
+  deployOutcome: DeployOutcome | null
   isDeploying: boolean
   onDeploy: () => void
 }
@@ -47,7 +47,7 @@ export function PreviewPanel({
   configLocked,
   status,
   deployUrl,
-  deployGacha,
+  deployOutcome,
   isDeploying,
   onDeploy,
 }: PreviewPanelProps) {
@@ -92,15 +92,27 @@ export function PreviewPanel({
         </button>
       </div>
 
-      {/* 「運」: サーバー大きさガチャの結果 */}
-      {status === 'deployed' && deployGacha && (
-        <div
-          className={`flex items-center gap-2 border-b px-4 py-2 text-xs ${RARITY_STYLE[deployGacha.rarity]}`}
-        >
-          <span className="text-base">{deployGacha.emoji}</span>
-          <span className="font-semibold">{deployGacha.rarityLabel}</span>
-          <span className="opacity-70">サーバー: </span>
-          <span className="font-mono">{deployGacha.instanceType}</span>
+      {/* 「運」: デプロイ先ガチャ + (EC2なら)サーバー大きさガチャの結果 */}
+      {status === 'deployed' && deployOutcome && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800 bg-neutral-900/60 px-4 py-2 text-xs">
+          {/* デプロイ先バッジ */}
+          <span className="flex items-center gap-1.5 rounded-full border border-neutral-600 bg-neutral-800/60 px-2.5 py-1 text-neutral-200">
+            <span className="text-base">{deployOutcome.targetEmoji}</span>
+            <span className="opacity-70">デプロイ先: </span>
+            <span className="font-semibold">{deployOutcome.targetLabel}</span>
+          </span>
+
+          {/* サーバー大きさバッジ(EC2のときのみ) */}
+          {deployOutcome.size && (
+            <span
+              className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${RARITY_STYLE[deployOutcome.size.rarity]}`}
+            >
+              <span className="text-base">{deployOutcome.size.emoji}</span>
+              <span className="font-semibold">{deployOutcome.size.rarityLabel}</span>
+              <span className="opacity-70">サーバー: </span>
+              <span className="font-mono">{deployOutcome.size.instanceType}</span>
+            </span>
+          )}
         </div>
       )}
 
