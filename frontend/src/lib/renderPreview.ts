@@ -1,7 +1,7 @@
 // 生成された .jsx を、ブラウザの iframe(srcDoc) で動く単一HTMLに包む。
 // React / ReactDOM / Babel はバックエンドが配信する /vendor を使う。
 
-const API_ORIGIN = 'http://localhost:3000'
+const API_ORIGIN = import.meta.env.VITE_API_ORIGIN ?? 'http://localhost:3000'
 
 /** モデルが日本語・絵文字を \uXXXX / \u{XXXXX} でエスケープして返すことがあるため戻す */
 function decodeUnicodeEscapes(s: string): string {

@@ -11,6 +11,10 @@ import type {
 // DBの代わりに、画面の全状態を localStorage に保存する
 const STORAGE_KEY = 'infra-agent-state'
 
+// APIの向き先。本番は VITE_API_ORIGIN を設定する。
+// 未設定(開発時)は空文字 → 相対パスになり Vite の proxy が localhost:3000 へ転送する。
+const API_ORIGIN = import.meta.env.VITE_API_ORIGIN ?? ''
+
 function App() {
   const [projectName, setProjectName] = useState('my-app')
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -69,7 +73,7 @@ function App() {
       setMessages((prev) => [...prev, { role: 'user', content: text }])
 
       try {
-        const res = await fetch('/api/generate', {
+        const res = await fetch(`${API_ORIGIN}/api/generate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ messages: history, currentJsx, message: text }),
@@ -136,7 +140,7 @@ function App() {
     if (!currentJsx || isDeploying) return
     setIsDeploying(true)
     try {
-      const res = await fetch('/api/deploy-app-gacha', {
+      const res = await fetch(`${API_ORIGIN}/api/deploy-app-gacha`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectName, jsx: currentJsx }),
