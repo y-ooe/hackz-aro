@@ -1,0 +1,140 @@
+==========================================================
+ backend を EC2 にデプロイする手順メモ
+==========================================================
+
+対象: backend/ (Express + TypeScript)
+前提リージョン: ap-northeast-1 (東京) ※コードのデフォルト
+
+----------------------------------------------------------
+ 0. このバックエンドが必要とするもの
+----------------------------------------------------------
+[環境変数]
+  ANTHROPIC_API_KEY  ... Claude API キー (必須)
+  PORT               ... リッスンポート (未設定なら 3000)
+  AWS_REGION         ... 未設定なら ap-northeast-1
+
+[AWS権限] ※「デプロイガチャ」が実際にAWSを操作するため必要
+  - EC2 : RunInstances / DescribeInstances /
+          DescribeSecurityGroups / CreateSecurityGroup /
+          AuthorizeSecurityGroupIngress
+  - SSM : GetParameter (最新AMIの取得)
+  - S3  : CreateBucket / PutBucketPolicy / PutBucketWebsite /
+          PutObject / PutPublicAccessBlock (静的サイトデプロイ用)
+
+  → 推奨: アクセスキーをサーバーに置かず、EC2に「IAMロール」を
+          アタッチする。ハッカソンなら手早く AmazonEC2FullAccess +
+          AmazonS3FullAccess + AmazonSSMReadOnlyAccess でも可。
+          (本番は上記アクションだけに絞った最小権限ポリシーが望ましい)
+
+----------------------------------------------------------
+ 1. EC2インスタンスを起動
+----------------------------------------------------------
+  - AMI          : Amazon Linux 2023
+  - インスタンス : t3.small 以上を推奨 (t3.micro でも可)
+  - キーペア     : SSH用に作成 or 既存を選択
+  - IAMロール    : 上記権限を持つロールをアタッチ (重要)
+  - セキュリティグループ (インバウンド):
+      * SSH  (22)  : 自分のIPのみ
+      * HTTP (80)  : 0.0.0.0/0   ← フロント(Cloudflare)からのAPI用
+      * (HTTPSにする場合は 443 も)
+
+----------------------------------------------------------
+ 2. サーバーにSSH接続して環境構築
+----------------------------------------------------------
+  ssh -i <キーペア>.pem ec2-user@<EC2のパブリックIP>
+
+  # Node.js (v22系) と git を入れる
+  sudo dnf install -y nodejs git
+
+  # ソースを取得
+  git clone <このリポジトリのURL>
+  cd hackz-aro/backend
+
+  # 依存をインストール
+  npm ci
+
+----------------------------------------------------------
+ 3. 環境変数(.env)を作成
+----------------------------------------------------------
+  cat > .env <<'EOF'
+  ANTHROPIC_API_KEY=sk-ant-xxxxxxxx
+  PORT=3000
+  AWS_REGION=ap-northeast-1
+  EOF
+
+  ※ IAMロールを付けていれば AWS_ACCESS_KEY_ID 等は不要。
+    ロールを使わない場合のみ、AWS_ACCESS_KEY_ID と
+    AWS_SECRET_ACCESS_KEY も .env に追記する。
+
+----------------------------------------------------------
+ 4. ビルド & 常駐起動 (pm2)
+----------------------------------------------------------
+  npm run build              # tsc で dist/ を生成
+
+  sudo npm i -g pm2
+  pm2 start dist/index.js --name backend
+  pm2 save                   # 設定を保存
+  pm2 startup                # OS再起動後も自動起動 (表示されたコマンドを実行)
+
+  # 動作確認 (別ターミナル or サーバー内)
+  curl http://localhost:3000/      → "Hello World" が返ればOK
+  外部からは  http://<EC2のパブリックIP>:3000/
+
+----------------------------------------------------------
+ 5. (推奨) nginx で 80番 → 3000番 にリバースプロキシ
+----------------------------------------------------------
+  ※ フロントは標準ポート(80/443)で叩く方が素直なので推奨。
+    手順1のSGで80を開けておくこと。
+
+  sudo dnf install -y nginx
+  sudo tee /etc/nginx/conf.d/backend.conf > /dev/null <<'EOF'
+  server {
+      listen 80;
+      server_name _;
+      location / {
+          proxy_pass http://127.0.0.1:3000;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          # /api/generate はストリーミング(NDJSON)なのでバッファ無効化
+          proxy_buffering off;
+      }
+  }
+  EOF
+  sudo systemctl enable --now nginx
+  sudo nginx -t && sudo systemctl restart nginx
+
+  → これで http://<パブリックIP>/ でアクセス可能。
+
+----------------------------------------------------------
+ 6. フロント(Cloudflare)との接続
+----------------------------------------------------------
+  - frontend/.env.production の VITE_API_ORIGIN に
+    このバックエンドのURL(末尾スラッシュなし)を設定する。
+        例: VITE_API_ORIGIN=http://<EC2のパブリックIP>
+        (nginxを入れた場合は :3000 不要)
+
+  - !!! 重要 !!! CORS設定がまだ未対応。
+    フロントとバックエンドが別オリジンになるため、
+    backend/src/app.ts に CORS ミドルウェアの追加が必要。
+    これが無いとブラウザがAPI呼び出しをブロックする。
+
+----------------------------------------------------------
+ 7. コード更新時の再デプロイ
+----------------------------------------------------------
+  cd hackz-aro/backend
+  git pull
+  npm ci
+  npm run build
+  pm2 restart backend
+
+----------------------------------------------------------
+ 補足 / 注意点
+----------------------------------------------------------
+  - IPはインスタンス再起動で変わる。固定したいなら Elastic IP を割当。
+  - 本番運用するなら HTTPS 化(ドメイン + Let's Encrypt)を推奨。
+    Cloudflareがhttpsのフロントから http のAPIを叩くと
+    Mixed Content でブロックされる点に注意。
+  - ガチャ機能で起動されるEC2は3分で自動terminateされる設計
+    (deployEc2.ts の shutdownMinutes)。料金の付けっぱなしに注意。
+==========================================================
