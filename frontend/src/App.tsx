@@ -3,6 +3,7 @@ import { ChatPanel } from './components/ChatPanel'
 import { PreviewPanel } from './components/PreviewPanel'
 import type {
   ChatMessage,
+  DeployGacha,
   PersistedState,
   SessionStatus,
   TargetCloud,
@@ -19,6 +20,7 @@ function App() {
   const [previewKey, setPreviewKey] = useState(0)
   const [status, setStatus] = useState<SessionStatus>('draft')
   const [deployUrl, setDeployUrl] = useState<string | null>(null)
+  const [deployGacha, setDeployGacha] = useState<DeployGacha | null>(null)
   const [isSending, setIsSending] = useState(false)
   const [isDeploying, setIsDeploying] = useState(false)
 
@@ -37,6 +39,7 @@ function App() {
         setCurrentJsx(s.currentJsx ?? null)
         setStatus(s.status ?? 'draft')
         setDeployUrl(s.deployUrl ?? null)
+        setDeployGacha(s.deployGacha ?? null)
         if (s.currentJsx) setPreviewKey(Date.now())
       }
     } catch {
@@ -55,9 +58,10 @@ function App() {
       currentJsx,
       status,
       deployUrl,
+      deployGacha,
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
-  }, [projectName, targetCloud, messages, currentJsx, status, deployUrl])
+  }, [projectName, targetCloud, messages, currentJsx, status, deployUrl, deployGacha])
 
   /** チャット送信 */
   const handleSend = useCallback(
@@ -96,6 +100,7 @@ function App() {
               setCurrentJsx(event.text)
               setStatus('draft') // 修正したので未デプロイ扱いに戻す
               setDeployUrl(null)
+              setDeployGacha(null)
               setPreviewKey(Date.now())
             } else if (event.type === 'error' && event.text) {
               setMessages((prev) => [
@@ -135,15 +140,28 @@ function App() {
     if (!currentJsx || isDeploying) return
     setIsDeploying(true)
     try {
-      const res = await fetch('/api/deploy-app', {
+      const res = await fetch('/api/deploy-app-ec2', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectName, jsx: currentJsx }),
       })
-      const data = (await res.json()) as { url?: string; error?: string }
+      const data = (await res.json()) as {
+        url?: string
+        error?: string
+      } & Partial<DeployGacha>
       if (!res.ok) throw new Error(data.error ?? 'デプロイに失敗しました')
       setStatus('deployed')
       setDeployUrl(data.url ?? null)
+      setDeployGacha(
+        data.instanceType && data.rarity && data.rarityLabel && data.emoji
+          ? {
+              instanceType: data.instanceType,
+              rarity: data.rarity,
+              rarityLabel: data.rarityLabel,
+              emoji: data.emoji,
+            }
+          : null
+      )
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       setMessages((prev) => [
@@ -162,6 +180,7 @@ function App() {
     setCurrentJsx(null)
     setStatus('draft')
     setDeployUrl(null)
+    setDeployGacha(null)
     setPreviewKey(Date.now())
   }, [])
 
@@ -195,6 +214,7 @@ function App() {
           configLocked={false}
           status={status}
           deployUrl={deployUrl}
+          deployGacha={deployGacha}
           isDeploying={isDeploying}
           onDeploy={handleDeploy}
         />
