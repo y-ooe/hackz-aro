@@ -20,6 +20,8 @@ export interface DeployEc2Options {
     region?: string;
     /** インスタンスタイプ。未指定なら t3.micro */
     instanceType?: string;
+    /** 起動から何分後に自動終了(terminate)するか。未指定なら 3 分 */
+    shutdownMinutes?: number;
 }
 
 export interface DeployEc2Result {
@@ -51,6 +53,7 @@ export async function deployEc2(opts: DeployEc2Options): Promise<DeployEc2Result
     const region = opts.region ?? process.env.AWS_REGION ?? 'ap-northeast-1';
     const instanceType = opts.instanceType ?? 't3.micro';
     const name = opts.name ?? 'hackathon-web';
+    const shutdownMinutes = opts.shutdownMinutes ?? 3;
 
     if (!opts.html) {
         throw new Error('デプロイ対象のHTMLがありません');
@@ -61,11 +64,11 @@ export async function deployEc2(opts: DeployEc2Options): Promise<DeployEc2Result
     // 1. 最新の Amazon Linux 2023 AMI を取得
     const amiId = await getLatestAl2023Ami(region);
 
-    // 2. セキュリティグループを用意
+    // 2. セキュリティグループを用意(HTTP 80 を全開放)
     const securityGroupId = await ensureSecurityGroup(ec2);
 
     // 3. user_data を組み立ててインスタンスを起動
-    const userData = buildUserData(opts.html);
+    const userData = buildUserData(opts.html, shutdownMinutes);
     const run = await ec2.send(
         new RunInstancesCommand({
             ImageId: amiId,
@@ -74,6 +77,8 @@ export async function deployEc2(opts: DeployEc2Options): Promise<DeployEc2Result
             MaxCount: 1,
             SecurityGroupIds: [securityGroupId],
             UserData: Buffer.from(userData).toString('base64'),
+            // OSのシャットダウン(=自動終了タイマー)で terminate されるようにする
+            InstanceInitiatedShutdownBehavior: 'terminate',
             TagSpecifications: [
                 {
                     ResourceType: 'instance',
@@ -108,8 +113,11 @@ export async function deployEc2(opts: DeployEc2Options): Promise<DeployEc2Result
 
 // ---- 内部ヘルパー ---------------------------------------------------------
 
-/** 起動時に1回だけ走るスクリプト：nginx を入れて HTML を index.html として配信する。 */
-function buildUserData(html: string): string {
+/**
+ * 起動時に1回だけ走るスクリプト：nginx を入れて HTML を index.html として配信する。
+ * shutdownMinutes 分後に自動シャットダウン → 自動終了する。
+ */
+function buildUserData(html: string, shutdownMinutes: number): string {
     const htmlBase64 = Buffer.from(html).toString('base64');
     return `#!/bin/bash
 set -e
@@ -117,6 +125,8 @@ dnf install -y nginx
 systemctl enable --now nginx
 echo "${htmlBase64}" | base64 -d > /usr/share/nginx/html/index.html
 systemctl restart nginx
+# ${shutdownMinutes}分後に自動シャットダウン → InstanceInitiatedShutdownBehavior=terminate で自動削除
+shutdown -h +${shutdownMinutes}
 `;
 }
 
