@@ -1,7 +1,7 @@
 // 生成された .jsx を、ブラウザの iframe(srcDoc) で動く単一HTMLに包む。
 // React / ReactDOM / Babel はバックエンドが配信する /vendor を使う。
 
-const API_ORIGIN = 'http://localhost:3000'
+const API_ORIGIN = import.meta.env.VITE_API_ORIGIN ?? 'http://localhost:3000'
 
 /** モデルが日本語・絵文字を \uXXXX / \u{XXXXX} でエスケープして返すことがあるため戻す */
 function decodeUnicodeEscapes(s: string): string {
@@ -14,8 +14,21 @@ function decodeUnicodeEscapes(s: string): string {
     )
 }
 
+/**
+ * decodeUnicodeEscapesで解決できなかった不正なエスケープ(桁不足の \xZZ、
+ * \u12 のような不完全な \u、strictモードで無効な \1〜\9 の数値エスケープ)を
+ * バックスラッシュ自体として無害化し、Babelの構文エラーを防ぐ。
+ * \d, \s, \w など正規表現で使う通常のエスケープは対象外で変更しない。
+ */
+function sanitizeInvalidEscapes(s: string): string {
+  return s
+    .replace(/\\x(?![0-9a-fA-F]{2})/g, '\\\\x')
+    .replace(/\\u/g, '\\\\u') // decodeUnicodeEscapesで正しい形は解決済みなので、残る \u は必ず不正
+    .replace(/\\([1-9])/g, '\\\\$1')
+}
+
 export function renderPreviewHtml(jsx: string): string {
-  const code = decodeUnicodeEscapes(jsx)
+  const code = sanitizeInvalidEscapes(decodeUnicodeEscapes(jsx))
     .replace(/^\s*import\s.*$/gm, '')
     .replace(/^\s*export\s+default\s+.*$/gm, '')
     // <script>タグ内に埋め込むため、終了タグ文字列だけ無害化する

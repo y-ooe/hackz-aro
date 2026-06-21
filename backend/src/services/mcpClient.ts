@@ -4,7 +4,7 @@ import path from "node:path";
 
 const MCP_SERVER_PATH = path.resolve(
   import.meta.dirname,
-  "../../mcp/dist/index.js"
+  "../../../mcp/dist/index.js"
 );
 
 let client: Client | null = null;

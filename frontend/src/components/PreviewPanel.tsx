@@ -1,13 +1,13 @@
 import { useMemo } from 'react'
-import type { SessionStatus, TargetCloud } from '../types'
+import type { DeployOutcome, Rarity, SessionStatus } from '../types'
 import { renderPreviewHtml } from '../lib/renderPreview'
 
-const CLOUD_OPTIONS: { value: TargetCloud; label: string }[] = [
-  { value: 'vercel', label: 'Vercel' },
-  { value: 'aws', label: 'AWS' },
-  { value: 'gcp', label: 'Google Cloud' },
-  { value: 'cloudflare', label: 'Cloudflare' },
-]
+// レアリティごとの見た目(枠線・文字色・背景)
+const RARITY_STYLE: Record<Rarity, string> = {
+  common: 'border-neutral-600 bg-neutral-800/60 text-neutral-200',
+  rare: 'border-sky-500/60 bg-sky-950/40 text-sky-200',
+  ssr: 'border-amber-400/70 bg-amber-950/40 text-amber-200',
+}
 
 interface PreviewPanelProps {
   /** 現在の生成コード(.jsx)。無ければ null */
@@ -15,12 +15,12 @@ interface PreviewPanelProps {
   previewKey: number
   projectName: string
   onProjectNameChange: (value: string) => void
-  targetCloud: TargetCloud
-  onTargetCloudChange: (value: TargetCloud) => void
   /** セッション開始前のみ設定を編集できる */
   configLocked: boolean
   status: SessionStatus
   deployUrl: string | null
+  /** デプロイ時に引いた「ガチャ」結果(デプロイ先 + EC2ならサーバー大きさ) */
+  deployOutcome: DeployOutcome | null
   isDeploying: boolean
   onDeploy: () => void
 }
@@ -33,11 +33,10 @@ export function PreviewPanel({
   previewKey,
   projectName,
   onProjectNameChange,
-  targetCloud,
-  onTargetCloudChange,
   configLocked,
   status,
   deployUrl,
+  deployOutcome,
   isDeploying,
   onDeploy,
 }: PreviewPanelProps) {
@@ -59,18 +58,6 @@ export function PreviewPanel({
           placeholder="project-name"
           className="w-40 rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-1.5 text-sm text-neutral-100 outline-none transition focus:border-neutral-500 disabled:opacity-60"
         />
-        <select
-          value={targetCloud}
-          onChange={(e) => onTargetCloudChange(e.target.value as TargetCloud)}
-          disabled={configLocked}
-          className="rounded-lg border border-neutral-800 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100 outline-none transition focus:border-neutral-500 disabled:opacity-60"
-        >
-          {CLOUD_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
 
         <button
           type="button"
@@ -81,6 +68,40 @@ export function PreviewPanel({
           {isDeploying ? 'デプロイ中…' : status === 'deployed' ? 'デプロイ済み' : 'デプロイ'}
         </button>
       </div>
+
+      {/* 「運」: 2段ガチャの結果(1回目=デプロイ先 / 2回目=サーバー大きさ) */}
+      {status === 'deployed' && deployOutcome && (
+        <div className="flex flex-col gap-1.5 border-b border-neutral-800 bg-neutral-900/60 px-4 py-2 text-xs">
+          {/* 1回目: デプロイ先ガチャ */}
+          <div className="flex items-center gap-2">
+            <span className="w-12 shrink-0 font-mono text-[10px] text-neutral-500">1回目</span>
+            <span className="flex items-center gap-1.5 rounded-full border border-neutral-600 bg-neutral-800/60 px-2.5 py-1 text-neutral-200">
+              <span className="text-base">{deployOutcome.targetEmoji}</span>
+              <span className="opacity-70">デプロイ先: </span>
+              <span className="font-semibold">{deployOutcome.targetLabel}</span>
+            </span>
+          </div>
+
+          {/* 2回目: サーバー大きさガチャ(EC2のときのみ) */}
+          <div className="flex items-center gap-2">
+            <span className="w-12 shrink-0 font-mono text-[10px] text-neutral-500">2回目</span>
+            {deployOutcome.size ? (
+              <span
+                className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${RARITY_STYLE[deployOutcome.size.rarity]}`}
+              >
+                <span className="text-base">{deployOutcome.size.emoji}</span>
+                <span className="font-semibold">{deployOutcome.size.rarityLabel}</span>
+                <span className="opacity-70">サーバー: </span>
+                <span className="font-mono">{deployOutcome.size.instanceType}</span>
+              </span>
+            ) : (
+              <span className="rounded-full border border-neutral-700 bg-neutral-800/40 px-2.5 py-1 text-neutral-500">
+                S3のためサーバー抽選なし
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* デプロイ完了URL */}
       {status === 'deployed' && deployUrl && (

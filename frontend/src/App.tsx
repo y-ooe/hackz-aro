@@ -3,22 +3,26 @@ import { ChatPanel } from './components/ChatPanel'
 import { PreviewPanel } from './components/PreviewPanel'
 import type {
   ChatMessage,
+  DeployOutcome,
   PersistedState,
   SessionStatus,
-  TargetCloud,
 } from './types'
 
 // DBの代わりに、画面の全状態を localStorage に保存する
 const STORAGE_KEY = 'infra-agent-state'
 
+// APIの向き先。本番は VITE_API_ORIGIN を設定する。
+// 未設定(開発時)は空文字 → 相対パスになり Vite の proxy が localhost:3000 へ転送する。
+const API_ORIGIN = import.meta.env.VITE_API_ORIGIN ?? ''
+
 function App() {
   const [projectName, setProjectName] = useState('my-app')
-  const [targetCloud, setTargetCloud] = useState<TargetCloud>('vercel')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [currentJsx, setCurrentJsx] = useState<string | null>(null)
   const [previewKey, setPreviewKey] = useState(0)
   const [status, setStatus] = useState<SessionStatus>('draft')
   const [deployUrl, setDeployUrl] = useState<string | null>(null)
+  const [deployOutcome, setDeployOutcome] = useState<DeployOutcome | null>(null)
   const [isSending, setIsSending] = useState(false)
   const [isDeploying, setIsDeploying] = useState(false)
 
@@ -32,11 +36,11 @@ function App() {
       if (saved) {
         const s = JSON.parse(saved) as Partial<PersistedState>
         setProjectName(s.projectName ?? 'my-app')
-        setTargetCloud(s.targetCloud ?? 'vercel')
         setMessages(s.messages ?? [])
         setCurrentJsx(s.currentJsx ?? null)
         setStatus(s.status ?? 'draft')
         setDeployUrl(s.deployUrl ?? null)
+        setDeployOutcome(s.deployOutcome ?? null)
         if (s.currentJsx) setPreviewKey(Date.now())
       }
     } catch {
@@ -50,14 +54,14 @@ function App() {
     if (!restored.current) return
     const state: PersistedState = {
       projectName,
-      targetCloud,
       messages,
       currentJsx,
       status,
       deployUrl,
+      deployOutcome,
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
-  }, [projectName, targetCloud, messages, currentJsx, status, deployUrl])
+  }, [projectName, messages, currentJsx, status, deployUrl, deployOutcome])
 
   /** チャット送信 */
   const handleSend = useCallback(
@@ -69,7 +73,7 @@ function App() {
       setMessages((prev) => [...prev, { role: 'user', content: text }])
 
       try {
-        const res = await fetch('/api/generate', {
+        const res = await fetch(`${API_ORIGIN}/api/generate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ messages: history, currentJsx, message: text }),
@@ -96,6 +100,7 @@ function App() {
               setCurrentJsx(event.text)
               setStatus('draft') // 修正したので未デプロイ扱いに戻す
               setDeployUrl(null)
+              setDeployOutcome(null)
               setPreviewKey(Date.now())
             } else if (event.type === 'error' && event.text) {
               setMessages((prev) => [
@@ -135,15 +140,28 @@ function App() {
     if (!currentJsx || isDeploying) return
     setIsDeploying(true)
     try {
-      const res = await fetch('/api/deploy-app', {
+      const res = await fetch(`${API_ORIGIN}/api/deploy-app-gacha`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectName, jsx: currentJsx }),
       })
-      const data = (await res.json()) as { url?: string; error?: string }
+      const data = (await res.json()) as {
+        url?: string
+        error?: string
+      } & Partial<DeployOutcome>
       if (!res.ok) throw new Error(data.error ?? 'デプロイに失敗しました')
       setStatus('deployed')
       setDeployUrl(data.url ?? null)
+      setDeployOutcome(
+        data.target && data.targetLabel && data.targetEmoji
+          ? {
+              target: data.target,
+              targetLabel: data.targetLabel,
+              targetEmoji: data.targetEmoji,
+              size: data.size ?? null,
+            }
+          : null
+      )
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       setMessages((prev) => [
@@ -162,6 +180,7 @@ function App() {
     setCurrentJsx(null)
     setStatus('draft')
     setDeployUrl(null)
+    setDeployOutcome(null)
     setPreviewKey(Date.now())
   }, [])
 
@@ -190,11 +209,10 @@ function App() {
           previewKey={previewKey}
           projectName={projectName}
           onProjectNameChange={setProjectName}
-          targetCloud={targetCloud}
-          onTargetCloudChange={setTargetCloud}
           configLocked={false}
           status={status}
           deployUrl={deployUrl}
+          deployOutcome={deployOutcome}
           isDeploying={isDeploying}
           onDeploy={handleDeploy}
         />

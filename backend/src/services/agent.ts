@@ -1,21 +1,15 @@
-import dotenv from "dotenv";
-import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod/v4";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 
-dotenv.config();
+import { anthropic } from "../lib/anthropic.js";
+
+const MODEL = "claude-opus-4-8";
 
 /** チャット1メッセージ(DBに依存しない最小形) */
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
 }
-
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
-
-const MODEL = "claude-opus-4-8";
 
 const ResultSchema = z.object({
   reply: z
@@ -44,7 +38,7 @@ const SYSTEM_PROMPT = [
   "- スタイルはコンポーネント内のインライン style か、コンポーネント先頭で定義した style 文字列で当ててください。外部CSSファイルやUIライブラリは使わないでください。",
   "- 必要なら App の下に補助コンポーネントや定数を定義してかまいません。最終的に画面に描画されるのは `App` です。",
   "- 見た目も整った、そのまま動く完成品にしてください。",
-  "- 日本語や絵文字は、Unicodeエスケープ(バックスラッシュuXXXX 形式)を絶対に使わず、そのまま直接書いてください。特にJSXのタグの中身にエスケープを書くと構文エラーになり画面が表示されません。例: <div>数学クイズ 🧮</div> と書く（エスケープ表記は禁止）。",
+  "- 日本語・絵文字・矢印や記号(▶ ● → ✓ など装飾文字)は、バックスラッシュによるエスケープ表記(\\uXXXX、\\xXX、\\2022 のようなCSS的Unicode表記を含む)を絶対に使わず、すべて実際の文字としてそのまま直接書いてください。特にJSXのタグの中身や文字列内にエスケープを書くと構文エラーになり画面が表示されません。例: <div>合計 50% 🧮 ▶ 完了</div> のように記号もそのまま書く（バックスラッシュによる表記は一切禁止）。",
   "",
   "【出力例のイメージ】",
   "function App() {",
@@ -60,13 +54,6 @@ const SYSTEM_PROMPT = [
 ].join("\n");
 
 /**
- * チャット履歴と現在のコードを踏まえて、Reactアプリを生成または修正する。
- *
- * @param history    これまでの会話(古い順)
- * @param currentJsx 現在の生成コード(.jsx, 無ければ null)
- * @param userMessage 今回のユーザー発言
- */
-/**
  * モデルが日本語・絵文字を \uXXXX / \u{XXXXX} でエスケープして返すことがある。
  * JSXのタグ内ではこれが構文エラーや文字化けになるため、実際の文字へ戻す。
  */
@@ -80,12 +67,19 @@ export function decodeUnicodeEscapes(s: string): string {
     );
 }
 
+/**
+ * チャット履歴と現在のコードを踏まえて、Reactアプリを生成または修正する。
+ *
+ * @param history     これまでの会話(古い順)
+ * @param currentJsx  現在の生成コード(.jsx, 無ければ null)
+ * @param userMessage 今回のユーザー発言
+ */
 export async function generateOrEditApp(
   history: ChatMessage[],
   currentJsx: string | null,
   userMessage: string
 ): Promise<AgentResult> {
-  const messages: Anthropic.MessageParam[] = history.map((m) => ({
+  const messages = history.map((m) => ({
     role: m.role,
     content: m.content,
   }));
