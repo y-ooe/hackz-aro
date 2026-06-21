@@ -5,7 +5,7 @@ import path from "node:path";
 dotenv.config();
 
 /** サーバーのリッスンポート */
-export const PORT = Number(process.env.PORT ?? "3000");
+export const PORT = Number(process.env.PORT ?? "3001");
 
 /** React/Babel など、プレビュー用の静的アセット配信元ディレクトリ */
 export const VENDOR_DIR = path.resolve(import.meta.dirname, "../public/vendor");
