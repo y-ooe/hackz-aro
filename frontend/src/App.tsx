@@ -6,7 +6,6 @@ import type {
   DeployOutcome,
   PersistedState,
   SessionStatus,
-  TargetCloud,
 } from './types'
 
 // DBの代わりに、画面の全状態を localStorage に保存する
@@ -14,7 +13,6 @@ const STORAGE_KEY = 'infra-agent-state'
 
 function App() {
   const [projectName, setProjectName] = useState('my-app')
-  const [targetCloud, setTargetCloud] = useState<TargetCloud>('vercel')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [currentJsx, setCurrentJsx] = useState<string | null>(null)
   const [previewKey, setPreviewKey] = useState(0)
@@ -34,7 +32,6 @@ function App() {
       if (saved) {
         const s = JSON.parse(saved) as Partial<PersistedState>
         setProjectName(s.projectName ?? 'my-app')
-        setTargetCloud(s.targetCloud ?? 'vercel')
         setMessages(s.messages ?? [])
         setCurrentJsx(s.currentJsx ?? null)
         setStatus(s.status ?? 'draft')
@@ -53,7 +50,6 @@ function App() {
     if (!restored.current) return
     const state: PersistedState = {
       projectName,
-      targetCloud,
       messages,
       currentJsx,
       status,
@@ -61,7 +57,7 @@ function App() {
       deployOutcome,
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
-  }, [projectName, targetCloud, messages, currentJsx, status, deployUrl, deployOutcome])
+  }, [projectName, messages, currentJsx, status, deployUrl, deployOutcome])
 
   /** チャット送信 */
   const handleSend = useCallback(
@@ -209,8 +205,6 @@ function App() {
           previewKey={previewKey}
           projectName={projectName}
           onProjectNameChange={setProjectName}
-          targetCloud={targetCloud}
-          onTargetCloudChange={setTargetCloud}
           configLocked={false}
           status={status}
           deployUrl={deployUrl}

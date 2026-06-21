@@ -30,8 +30,6 @@ export interface DeployGachaResult {
  * 2. S3 を引いたら deployApp() で即デプロイ
  * 3. EC2 を引いたら deployAppEc2() でデプロイ(その中でさらにサーバー大きさを抽選)
  * 4. 引いた結果と公開URLを返す
- *
- * 既存の S3版(deployApp) / EC2版(deployAppEc2) をそのまま呼び分けるだけ。
  */
 export async function deployAppGacha(
   projectName: string,
